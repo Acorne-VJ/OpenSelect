@@ -18,6 +18,67 @@ Built with Bun and TypeScript. The proxy has no npm runtime dependencies; the da
 
 For the detailed feature reference, see [FEATURES.md](FEATURES.md) (Chinese).
 
+## Screenshots
+
+The screenshots below show the Chinese interface. Account details and usage data have been redacted.
+
+<details>
+<summary>Dashboard</summary>
+
+![Dashboard](docs/screenshots/dashboard.png)
+
+</details>
+
+<details>
+<summary>Usage statistics</summary>
+
+![Usage statistics](docs/screenshots/usage-statistics.png)
+
+</details>
+
+<details>
+<summary>Model availability</summary>
+
+![Model availability](docs/screenshots/model-availability.png)
+
+</details>
+
+<details>
+<summary>Request log</summary>
+
+![Request log](docs/screenshots/request-log.png)
+
+</details>
+
+<details>
+<summary>Switch history</summary>
+
+![Switch history](docs/screenshots/switch-history.png)
+
+</details>
+
+<details>
+<summary>Routing</summary>
+
+![Routing](docs/screenshots/routing.png)
+
+</details>
+
+<details>
+<summary>Connections</summary>
+
+![Connections](docs/screenshots/connections.png)
+
+</details>
+
+<details>
+<summary>Settings</summary>
+
+![Settings](docs/screenshots/settings.png)
+
+</details>
+
+
 ## Requirements
 
 - [Bun](https://bun.sh/) and Git.

@@ -8,6 +8,67 @@
 
 > 面向个人本机使用；供应商账号和 API Key 保存在使用者自己的设备上。
 
+## 界面截图
+
+以下截图展示中文界面，账号信息和使用数据已打码。
+
+<details>
+<summary>控制台</summary>
+
+![控制台](docs/screenshots/dashboard.png)
+
+</details>
+
+<details>
+<summary>用量统计</summary>
+
+![用量统计](docs/screenshots/usage-statistics.png)
+
+</details>
+
+<details>
+<summary>模型可用性</summary>
+
+![模型可用性](docs/screenshots/model-availability.png)
+
+</details>
+
+<details>
+<summary>请求日志</summary>
+
+![请求日志](docs/screenshots/request-log.png)
+
+</details>
+
+<details>
+<summary>切换记录</summary>
+
+![切换记录](docs/screenshots/switch-history.png)
+
+</details>
+
+<details>
+<summary>线路优化</summary>
+
+![线路优化](docs/screenshots/routing.png)
+
+</details>
+
+<details>
+<summary>接入</summary>
+
+![接入](docs/screenshots/connections.png)
+
+</details>
+
+<details>
+<summary>设置</summary>
+
+![设置](docs/screenshots/settings.png)
+
+</details>
+
+
 ## 特性
 
 - **官方用量监控**：每 45s 并行轮询 `GET /inference/go/v1/usage`，记录每账号 rolling / weekly / monthly 的 percent / status / resetsAt；官方 `percent` 为 0–100，统一归一化到 0–1（2% 不会再被放大 100 倍后按 150% 显示并误判限流）；若所有账号长期显示 0.0x% 且从不触发限流，说明上游刻度变更，需重新核对 `/v1/usage` 响应；重启后自动恢复 ≤24h 的最近用量快照，避免重启窗口误选已接近阈值的账号
