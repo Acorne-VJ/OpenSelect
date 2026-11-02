@@ -4,7 +4,7 @@ English | [简体中文](README.zh-CN.md)
 
 OpenSelect is a local AI proxy for managing multiple provider accounts. It monitors OpenCode Go usage, routes requests through an account pool, and can retry with another account when an upstream request fails before the response starts. A local dashboard shows account status, usage, requests, and routing information.
 
-Built with Bun and TypeScript. The proxy has no npm runtime dependencies; the dashboard is currently in Chinese.
+Built with Bun and TypeScript. The proxy has no npm runtime dependencies; the dashboard supports English and Chinese.
 
 ## Features
 
@@ -20,61 +20,56 @@ For the detailed feature reference, see [FEATURES.md](FEATURES.md) (Chinese).
 
 ## Screenshots
 
-The screenshots below show the Chinese interface. Account details and usage data have been redacted.
+The English interface with sample accounts and simulated usage data:
 
-<details>
-<summary>Dashboard</summary>
-
-![Dashboard](docs/screenshots/dashboard.png)
-
-</details>
+![OpenSelect dashboard in English](docs/screenshots/en/dashboard.png)
 
 <details>
 <summary>Usage statistics</summary>
 
-![Usage statistics](docs/screenshots/usage-statistics.png)
+![Usage statistics](docs/screenshots/en/usage-statistics.png)
 
 </details>
 
 <details>
 <summary>Model availability</summary>
 
-![Model availability](docs/screenshots/model-availability.png)
+![Model availability](docs/screenshots/en/model-availability.png)
 
 </details>
 
 <details>
 <summary>Request log</summary>
 
-![Request log](docs/screenshots/request-log.png)
+![Request log](docs/screenshots/en/request-log.png)
 
 </details>
 
 <details>
 <summary>Switch history</summary>
 
-![Switch history](docs/screenshots/switch-history.png)
+![Switch history](docs/screenshots/en/switch-history.png)
 
 </details>
 
 <details>
 <summary>Routing</summary>
 
-![Routing](docs/screenshots/routing.png)
+![Routing](docs/screenshots/en/routing.png)
 
 </details>
 
 <details>
 <summary>Connections</summary>
 
-![Connections](docs/screenshots/connections.png)
+![Connections](docs/screenshots/en/connections.png)
 
 </details>
 
 <details>
 <summary>Settings</summary>
 
-![Settings](docs/screenshots/settings.png)
+![Settings](docs/screenshots/en/settings.png)
 
 </details>
 
