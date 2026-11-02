@@ -1,0 +1,258 @@
+{
+ "mimo-v2.6-pro": {
+  "modelId": "mimo-v2.6-pro",
+  "name": "MiMo-V2.6-Pro",
+  "go": 15,
+  "plus": 60,
+  "free": false,
+  "note": null
+ },
+ "mimo-v2.5": {
+  "modelId": "mimo-v2.5",
+  "name": "MiMo V2.5",
+  "go": 60,
+  "plus": 120,
+  "free": false,
+  "note": null
+ },
+ "grok-4.7": {
+  "modelId": "grok-4.7",
+  "name": "Grok 4.7",
+  "go": 15,
+  "plus": 60,
+  "free": false,
+  "note": null
+ },
+ "longcat-2.5-preview-free": {
+  "modelId": "longcat-2.5-preview-free",
+  "name": "LongCat 2.5 Preview Free",
+  "go": null,
+  "plus": null,
+  "free": true,
+  "note": "Free"
+ },
+ "gemini-4-argon-contributor": {
+  "modelId": "gemini-4-argon-contributor",
+  "name": "Gemini 4 Argon Contributor",
+  "go": 60,
+  "plus": 240,
+  "free": false,
+  "note": "限时 2x（基准 $30/$120）"
+ },
+ "glm-5.3-flash": {
+  "modelId": "glm-5.3-flash",
+  "name": "GLM-5.3-Flash",
+  "go": 60,
+  "plus": 180,
+  "free": false,
+  "note": null
+ },
+ "qwen3.8-max": {
+  "modelId": "qwen3.8-max",
+  "name": "Qwen3.8 Max",
+  "go": 15,
+  "plus": 60,
+  "free": false,
+  "note": null
+ },
+ "kimi-k3": {
+  "modelId": "kimi-k3",
+  "name": "Kimi K3",
+  "go": 15,
+  "plus": 60,
+  "free": false,
+  "note": null
+ },
+ "deepseek-v4.1-flash": {
+  "modelId": "deepseek-v4.1-flash",
+  "name": "DeepSeek V4.1 Flash",
+  "go": 100,
+  "plus": 200,
+  "free": false,
+  "note": "OpenCode Go 官方 $100/$200 月度额度（2026-10-31）；高峰 01:00-04:00/06:00-10:00 UTC 周一至五，单价翻倍"
+ },
+ "step-5-preview": {
+  "modelId": "step-5-preview",
+  "name": "Step 5 Preview",
+  "go": 60,
+  "plus": 240,
+  "free": false,
+  "note": "限时 4x（基准 $15/$60）"
+ },
+ "longcat-2.0": {
+  "modelId": "longcat-2.0",
+  "name": "LongCat-2.0",
+  "go": 60,
+  "plus": 240,
+  "free": false,
+  "note": null
+ },
+ "cat-jam-free": {
+  "modelId": "cat-jam-free",
+  "name": "Cat Jam Free",
+  "go": null,
+  "plus": null,
+  "free": true,
+  "note": "Free"
+ },
+ "space-bunny": {
+  "modelId": "space-bunny",
+  "name": "Space Bunny",
+  "go": 30,
+  "plus": 120,
+  "free": false,
+  "note": null
+ },
+ "minimax-m2.7": {
+  "modelId": "minimax-m2.7",
+  "name": "MiniMax-M2.7",
+  "go": null,
+  "plus": null,
+  "free": false,
+  "note": "限额表未列出（旧模型）"
+ },
+ "mimo-v2.5-pro": {
+  "modelId": "mimo-v2.5-pro",
+  "name": "MiMo V2.5 Pro",
+  "go": 15,
+  "plus": 60,
+  "free": false,
+  "note": null
+ },
+ "mimo-v2.6-flash": {
+  "modelId": "mimo-v2.6-flash",
+  "name": "MiMo-V2.6-Flash",
+  "go": 60,
+  "plus": 120,
+  "free": false,
+  "note": null
+ },
+ "minimax-m3": {
+  "modelId": "minimax-m3",
+  "name": "MiniMax-M3",
+  "go": 60,
+  "plus": 180,
+  "free": false,
+  "note": null
+ },
+ "gpt-5.6-luna": {
+  "modelId": "gpt-5.6-luna",
+  "name": "GPT-5.6 Luna",
+  "go": 15,
+  "plus": 60,
+  "free": false,
+  "note": null
+ },
+ "qwen3.8-flash": {
+  "modelId": "qwen3.8-flash",
+  "name": "Qwen3.8 Flash",
+  "go": 30,
+  "plus": 90,
+  "free": false,
+  "note": null
+ },
+ "glm-5.2": {
+  "modelId": "glm-5.2",
+  "name": "GLM-5.2",
+  "go": 60,
+  "plus": 180,
+  "free": false,
+  "note": null
+ },
+ "hy3": {
+  "modelId": "hy3",
+  "name": "Hy3",
+  "go": 60,
+  "plus": 240,
+  "free": false,
+  "note": null
+ },
+ "muse-spark-1.2-contributor": {
+  "modelId": "muse-spark-1.2-contributor",
+  "name": "Muse Spark 1.2 Contributor",
+  "go": 60,
+  "plus": 120,
+  "free": false,
+  "note": null
+ },
+ "beam-free": {
+  "modelId": "beam-free",
+  "name": "Beam Free",
+  "go": null,
+  "plus": null,
+  "free": true,
+  "note": "Free"
+ },
+ "claude-haiku-5-5": {
+  "modelId": "claude-haiku-5-5",
+  "name": "Claude Haiku 5.5",
+  "go": 15,
+  "plus": 60,
+  "free": false,
+  "note": null
+ },
+ "gpt-6-luna": {
+  "modelId": "gpt-6-luna",
+  "name": "GPT-6 Luna",
+  "go": 15,
+  "plus": 60,
+  "free": false,
+  "note": null
+ },
+ "deepseek-v4-pro": {
+  "modelId": "deepseek-v4-pro",
+  "name": "DeepSeek V4 Pro (New)",
+  "go": 15,
+  "plus": 60,
+  "free": false,
+  "note": "高峰同上"
+ },
+ "hy4-preview": {
+  "modelId": "hy4-preview",
+  "name": "Hy4 preview",
+  "go": 30,
+  "plus": 120,
+  "free": false,
+  "note": null
+ },
+ "muse-spark-1.3-contributor": {
+  "modelId": "muse-spark-1.3-contributor",
+  "name": "Muse Spark 1.3 Contributor",
+  "go": 60,
+  "plus": 120,
+  "free": false,
+  "note": null
+ },
+ "step-5-preview-free": {
+  "modelId": "step-5-preview-free",
+  "name": "Step 5 Preview Free",
+  "go": null,
+  "plus": null,
+  "free": true,
+  "note": "Free"
+ },
+ "glm-5.3": {
+  "modelId": "glm-5.3",
+  "name": "GLM-5.3",
+  "go": 15,
+  "plus": 120,
+  "free": false,
+  "note": null
+ },
+ "kimi-k2.7-code": {
+  "modelId": "kimi-k2.7-code",
+  "name": "Kimi K2.7 Code",
+  "go": 60,
+  "plus": 180,
+  "free": false,
+  "note": null
+ },
+ "qwen3.7-plus": {
+  "modelId": "qwen3.7-plus",
+  "name": "Qwen3.7 Plus",
+  "go": 60,
+  "plus": 180,
+  "free": false,
+  "note": null
+ }
+}

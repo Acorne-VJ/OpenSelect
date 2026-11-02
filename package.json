@@ -1,0 +1,21 @@
+{
+  "name": "openselect",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "OpenSelect — 本机多账号池服务：OpenCode Go 官方用量监控、95-98% 阈值自动切换、请求级无缝故障转移代理",
+  "scripts": {
+    "start": "bun run src/cli.ts",
+    "test": "bun test",
+    "check": "bunx tsc --noEmit",
+    "collect:pricing": "bun run scripts/collect-time-pricing.ts"
+  },
+  "bin": {
+    "opensel": "./bin/opensel"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.9.0"
+  },
+  "license": "MIT"
+}

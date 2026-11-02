@@ -1,0 +1,19 @@
+node_modules/
+*.log
+.DS_Store
+/tmp-*
+data/raw/
+.opencode/
+.playwright-mcp/
+
+# local secrets / runtime state
+.env
+.env.*
+!.env.example
+config.json
+*.pem
+*.key
+*.sqlite
+*.sqlite-*
+data.sqlite*
+backups/

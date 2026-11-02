@@ -1,0 +1,323 @@
+{
+  "version": 1,
+  "lastVerified": "2026-11-01",
+  "lastRun": "2026-11-01T05:28:57.364Z",
+  "base": {
+    "name": "DeepSeek 官方 deepseek-flash 非高峰、cache miss、1:1",
+    "usdPerMillion": 0.375
+  },
+  "providers": [
+    {
+      "id": "deepseek",
+      "name": "DeepSeek 官方",
+      "timezone": "UTC",
+      "appliesTo": "api",
+      "peak": [
+        {
+          "days": [
+            1,
+            2,
+            3,
+            4,
+            5
+          ],
+          "start": "01:00",
+          "end": "04:00"
+        },
+        {
+          "days": [
+            1,
+            2,
+            3,
+            4,
+            5
+          ],
+          "start": "06:00",
+          "end": "10:00"
+        }
+      ],
+      "offPeakDiscount": 0.5,
+      "note": "非高峰为高峰价 50%；中国法定节假日全天非高峰",
+      "source": "https://api-docs.deepseek.com/quick_start/pricing",
+      "confidence": "collected",
+      "lastChecked": "2026-11-01T05:28:57.364Z",
+      "quality": 0.9
+    },
+    {
+      "id": "ollama",
+      "name": "Ollama Cloud",
+      "timezone": "UTC",
+      "appliesTo": "api+subscription",
+      "peak": [
+        {
+          "days": [
+            1,
+            2,
+            3,
+            4,
+            5
+          ],
+          "start": "12:00",
+          "end": "18:00"
+        }
+      ],
+      "offPeakDiscount": 0.5,
+      "note": "工作日 12:00–18:00 UTC 高峰；其余时间与周末全天非高峰；credits 按模型 rates 扣减",
+      "source": "https://ollama.com/pricing",
+      "confidence": "collected",
+      "lastChecked": "2026-11-01T05:28:57.364Z",
+      "quality": 0.9
+    },
+    {
+      "id": "zai",
+      "name": "Z.ai GLM Coding Plan",
+      "timezone": "Asia/Singapore",
+      "appliesTo": "subscription",
+      "peak": [
+        {
+          "days": [
+            1,
+            2,
+            3,
+            4,
+            5
+          ],
+          "start": "14:00",
+          "end": "18:00"
+        }
+      ],
+      "offPeakDiscount": 0.5,
+      "note": "高峰为周一至周五 14:00–18:00 SGT（UTC+8）；非高峰 credits 50%",
+      "source": "https://docs.z.ai/devpack/overview",
+      "confidence": "collected",
+      "lastChecked": "2026-11-01T05:28:57.364Z",
+      "quality": 0.84
+    },
+    {
+      "id": "minimax",
+      "name": "MiniMax M Plan / API",
+      "timezone": "UTC",
+      "appliesTo": "none",
+      "peak": [],
+      "offPeakDiscount": 1,
+      "note": "未发现公开的分时价格；按标准价 / 套餐额度",
+      "source": "https://platform.minimax.io/docs/guides/pricing",
+      "confidence": "checked",
+      "lastChecked": "2026-11-01T05:28:57.364Z",
+      "quality": 0.82
+    },
+    {
+      "id": "commandcode",
+      "name": "Command Code",
+      "timezone": "UTC",
+      "appliesTo": "none",
+      "peak": [],
+      "offPeakDiscount": 1,
+      "note": "Provider 按上游原价 / credits，无公开分时折扣",
+      "source": "https://commandcode.ai/pricing",
+      "confidence": "checked",
+      "lastChecked": "2026-11-01T05:28:57.364Z",
+      "quality": 0.88
+    },
+    {
+      "id": "opencode",
+      "name": "OpenCode Go",
+      "timezone": "UTC",
+      "appliesTo": "subscription",
+      "peak": [
+        {
+          "days": [
+            1,
+            2,
+            3,
+            4,
+            5
+          ],
+          "start": "01:00",
+          "end": "04:00"
+        },
+        {
+          "days": [
+            1,
+            2,
+            3,
+            4,
+            5
+          ],
+          "start": "06:00",
+          "end": "10:00"
+        }
+      ],
+      "offPeakDiscount": 0.5,
+      "note": "仅 DeepSeek V4.1 Flash / V4 Pro 有高峰；周一至周五 01:00–04:00、06:00–10:00 UTC；其他模型无公开分时",
+      "source": "https://opencode.ai/docs/go/",
+      "confidence": "collected",
+      "lastChecked": "2026-11-01T05:28:57.364Z",
+      "quality": 0.9
+    }
+  ],
+  "plans": [
+    {
+      "id": "opencode-go",
+      "provider": "opencode",
+      "name": "OpenCode Go",
+      "monthlyUsd": 10,
+      "includedUsd": 100,
+      "baseRatio": 0.1,
+      "timeRule": "opencode",
+      "source": "https://opencode.ai/docs/go/",
+      "timeMode": "price"
+    },
+    {
+      "id": "opencode-plus",
+      "provider": "opencode",
+      "name": "OpenCode Go Plus",
+      "monthlyUsd": 40,
+      "includedUsd": 200,
+      "baseRatio": 0.2,
+      "timeRule": "opencode",
+      "source": "https://opencode.ai/docs/go/",
+      "timeMode": "price"
+    },
+    {
+      "id": "opencode-teams",
+      "provider": "opencode",
+      "name": "OpenCode Go Teams",
+      "monthlyUsd": 20,
+      "includedUsd": 105,
+      "baseRatio": 0.1905,
+      "timeRule": "opencode",
+      "source": "https://opencode.ai/docs/go/",
+      "timeMode": "price"
+    },
+    {
+      "id": "commandcode-go",
+      "provider": "commandcode",
+      "name": "Command Code Go",
+      "monthlyUsd": 1,
+      "includedUsd": 10,
+      "baseRatio": 0.1,
+      "timeRule": "none",
+      "source": "https://commandcode.ai/pricing",
+      "timeMode": "none"
+    },
+    {
+      "id": "commandcode-goat",
+      "provider": "commandcode",
+      "name": "Command Code GOAT",
+      "monthlyUsd": 10,
+      "includedUsd": 100,
+      "baseRatio": 0.1,
+      "timeRule": "none",
+      "source": "https://commandcode.ai/pricing",
+      "timeMode": "none"
+    },
+    {
+      "id": "commandcode-pro",
+      "provider": "commandcode",
+      "name": "Command Code Pro",
+      "monthlyUsd": 20,
+      "includedUsd": 110,
+      "baseRatio": 0.1818,
+      "timeRule": "none",
+      "source": "https://commandcode.ai/pricing",
+      "timeMode": "none"
+    },
+    {
+      "id": "commandcode-max10",
+      "provider": "commandcode",
+      "name": "Command Code Max 10x",
+      "monthlyUsd": 100,
+      "includedUsd": 150,
+      "baseRatio": 0.6667,
+      "timeRule": "none",
+      "source": "https://commandcode.ai/pricing",
+      "timeMode": "none"
+    },
+    {
+      "id": "commandcode-max20",
+      "provider": "commandcode",
+      "name": "Command Code Max 20x",
+      "monthlyUsd": 200,
+      "includedUsd": 300,
+      "baseRatio": 0.6667,
+      "timeRule": "none",
+      "source": "https://commandcode.ai/pricing",
+      "timeMode": "none"
+    },
+    {
+      "id": "zai-lite",
+      "provider": "zai",
+      "name": "Z.ai Lite",
+      "monthlyUsd": 18,
+      "includedUsd": 31.55,
+      "baseRatio": 0.571,
+      "timeRule": "zai",
+      "source": "https://z.ai/subscribe",
+      "timeMode": "credits"
+    },
+    {
+      "id": "zai-pro",
+      "provider": "zai",
+      "name": "Z.ai Pro",
+      "monthlyUsd": 80,
+      "includedUsd": 189.3,
+      "baseRatio": 0.423,
+      "timeRule": "zai",
+      "source": "https://z.ai/subscribe",
+      "timeMode": "credits"
+    },
+    {
+      "id": "zai-max",
+      "provider": "zai",
+      "name": "Z.ai Max",
+      "monthlyUsd": 168,
+      "includedUsd": 441.7,
+      "baseRatio": 0.38,
+      "timeRule": "zai",
+      "source": "https://z.ai/subscribe",
+      "timeMode": "credits"
+    },
+    {
+      "id": "ollama-pro",
+      "provider": "ollama",
+      "name": "Ollama Cloud Pro",
+      "monthlyUsd": 20,
+      "includedUsd": 60,
+      "baseRatio": 0.333,
+      "timeRule": "ollama",
+      "source": "https://ollama.com/pricing",
+      "timeMode": "credits"
+    },
+    {
+      "id": "ollama-max",
+      "provider": "ollama",
+      "name": "Ollama Cloud Max",
+      "monthlyUsd": 100,
+      "includedUsd": 300,
+      "baseRatio": 0.333,
+      "timeRule": "ollama",
+      "source": "https://ollama.com/pricing",
+      "timeMode": "credits"
+    },
+    {
+      "id": "ollama-team",
+      "provider": "ollama",
+      "name": "Ollama Cloud Team",
+      "monthlyUsd": 500,
+      "includedUsd": 1000,
+      "baseRatio": 0.5,
+      "timeRule": "ollama",
+      "source": "https://ollama.com/pricing",
+      "timeMode": "credits"
+    }
+  ],
+  "lastErrors": [],
+  "scoring": {
+    "pressureWeight": 0.25,
+    "latencyWeight": 0.15,
+    "qualityWeight": 0.2,
+    "latencyNormalizeMs": 5000,
+    "reliabilityWeight": 0.15
+  }
+}
