@@ -1,3 +1,4 @@
+import { PAGE_LOCALE } from "./page_locale";
 import { loadCatalog } from "./catalog";
 import {
   tokenStatsByAccount,
@@ -285,7 +286,7 @@ ${navHtml("tokens")}
     <div class="card">
       <h2 style="margin-top:0">活跃度 <span class="muted" id="heatMeta"></span></h2>
       <div class="heatmap" id="heatmap"></div>
-      <div class="heat-legend"><span>少</span><i class="heat"></i><i class="heat l1"></i><i class="heat l2"></i><i class="heat l3"></i><i class="heat l4"></i><span>多</span><span id="heatLegend" style="margin-left:auto"></span></div>
+      <div class="heat-legend"><span id="heatLess">少</span><i class="heat"></i><i class="heat l1"></i><i class="heat l2"></i><i class="heat l3"></i><i class="heat l4"></i><span id="heatMore">多</span><span id="heatLegend" style="margin-left:auto"></span></div>
     </div>
     <div class="card">
       <h2 style="margin-top:0">24 小时节奏 <span class="muted" id="rhythmMeta"></span></h2>
@@ -350,10 +351,10 @@ function fmtUsd(n){ if(n==null||!isFinite(n)) return "—"; return "$"+Number(n)
 function pct(p){ return (p==null||!isFinite(p))?"—":(p*100).toFixed(1)+"%"; }
 function fmtT(ts){ if(!ts) return "—"; var d=new Date(ts); return d.toLocaleString("zh-CN",{hour12:false,month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"}); }
 function short(s,n){ s=String(s||""); return s.length>n?s.slice(0,n-1)+"…":s; }
-function providerLabel(p){ return {"opencode-go":"OpenCode","zai":"Z.ai","minimax":"MiniMax","deepseek":"DeepSeek","deepseek-api":"DeepSeek 官方","commandcode":"Command Code","ollama":"Ollama Cloud","zen":"Zen 免费","google":"Google","anthropic":"Anthropic","openai":"OpenAI","xai":"xAI","unknown":"未标记"}[p]||p||"未标记"; }
+function providerLabel(p){ return {"opencode-go":"OpenCode","zai":"Z.ai","minimax":"MiniMax","deepseek":"DeepSeek","deepseek-api":osT("DeepSeek 官方","DeepSeek official"),"commandcode":"Command Code","ollama":"Ollama Cloud","zen":osT("Zen 免费","Zen free"),"google":"Google","anthropic":"Anthropic","openai":"OpenAI","xai":"xAI","unknown":osT("未标记","Unknown")}[p]||p||osT("未标记","Unknown"); }
 function providerColor(p){ return {"opencode-go":"#4c8dff","zai":"#36d6c3","minimax":"#a879ff","deepseek":"#f0883e","deepseek-api":"#f0883e","commandcode":"#f778ba","ollama":"#3fb950","zen":"#8b98a9","unknown":"#8b98a9"}[p]||"#8b98a9"; }
-function clientLabel(c){ return {"opencode":"OpenCode","claude-code":"Claude Code","codex":"Codex","cursor":"Cursor","cline":"Cline","unknown":"未标记"}[c]||c||"未标记"; }
-function empty(cols){ return '<tr><td colspan="'+cols+'" class="muted">暂无数据</td></tr>'; }
+function clientLabel(c){ return {"opencode":"OpenCode","claude-code":"Claude Code","codex":"Codex","cursor":"Cursor","cline":"Cline","unknown":osT("未标记","Unknown")}[c]||c||osT("未标记","Unknown"); }
+function empty(cols){ return '<tr><td colspan="'+cols+'" class="muted">'+osT('暂无数据','No data')+'</td></tr>'; }
 function cardSpark(id, rows, key){
   var el=document.getElementById(id); if(!el) return;
   var vals=(rows||[]).map(function(r){return Number(r[key])||0;});
@@ -366,6 +367,8 @@ function dayKey(d){
   var y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,"0"), day=String(d.getDate()).padStart(2,"0");
   return y+"-"+m+"-"+day;
 }
+document.getElementById("heatLess").textContent=osT("少","Less");
+document.getElementById("heatMore").textContent=osT("多","More");
 function renderHeatmap(rows){
   var el=document.getElementById("heatmap"), meta=document.getElementById("heatMeta"), legend=document.getElementById("heatLegend");
   if(!el) return;
@@ -383,10 +386,10 @@ function renderHeatmap(rows){
   }
   el.innerHTML=cells.map(function(c){
     var lv=c.v===0?0:Math.min(4,Math.max(1,Math.ceil(c.v/Math.max(1,max)*4)));
-    return '<span class="heat '+(c.future?'future ':'')+'l'+lv+'" title="'+esc(c.k)+(c.future?' · 未来':' · '+fmtTok(c.v)+' tokens · '+num(c.req)+' 次')+'"></span>';
+    return '<span class="heat '+(c.future?'future ':'')+'l'+lv+'" title="'+esc(c.k)+(c.future?osT(' · 未来',' · future'):' · '+fmtTok(c.v)+' tokens · '+num(c.req)+osT(' 次',' requests'))+'"></span>';
   }).join("");
-  meta.textContent=" · 91 天 · "+fmtTok(total)+" tokens";
-  if(legend) legend.textContent="峰值 "+fmtTok(max);
+  meta.textContent=osT(" · 91 天 · "," · 91 days · ")+fmtTok(total)+" tokens";
+  if(legend) legend.textContent=osT("峰值 ","Peak ")+fmtTok(max);
 }
 function renderRhythm(rows){
   var el=document.getElementById("rhythm"), meta=document.getElementById("rhythmMeta");
@@ -399,20 +402,20 @@ function renderRhythm(rows){
   var max=Math.max.apply(null,hours.concat([1]));
   el.innerHTML=hours.map(function(v,i){
     var h=Math.round((v/max)*100);
-    return '<span class="rb" style="height:'+Math.max(2,h)+'%" title="'+String(i).padStart(2,"0")+':00 · '+fmtTok(v)+' tokens · '+num(reqs[i])+' 次"></span>';
+    return '<span class="rb" style="height:'+Math.max(2,h)+'%" title="'+String(i).padStart(2,"0")+':00 · '+fmtTok(v)+' tokens · '+num(reqs[i])+osT(' 次',' requests')+'"></span>';
   }).join("");
   var peak=hours.indexOf(Math.max.apply(null,hours));
-  meta.textContent=" · 峰值 "+String(peak).padStart(2,"0")+":00 · "+fmtTok(hours[peak]);
+  meta.textContent=osT(" · 峰值 "," · Peak ")+String(peak).padStart(2,"0")+":00 · "+fmtTok(hours[peak]);
 }
 function renderTrend(rows){
   var el=document.getElementById("trend");
-  if(!rows||!rows.length){ el.innerHTML='<div class="empty">暂无 Token 数据 —— 先发一条请求，usage 会写入台账</div>'; return; }
+  if(!rows||!rows.length){ el.innerHTML='<div class="empty">'+osT('暂无 Token 数据 —— 先发一条请求，usage 会写入台账','No token data yet. Send a request to record usage.')+'</div>'; return; }
   var max=Math.max.apply(null,rows.map(function(r){return Number(r.totalTokens)||0;}).concat([1]));
   var w=1000,h=220,padL=48,padR=18,padT=14,padB=30, innerW=w-padL-padR, innerH=h-padT-padB;
   var bw=Math.max(2,innerW/rows.length*0.62);
   var bars=rows.map(function(r,i){
     var v=Number(r.totalTokens)||0, bh=(v/max)*innerH, x=padL+(i+0.5)*(innerW/rows.length)-bw/2, y=padT+innerH-bh;
-    return '<rect x="'+x.toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+Math.max(0,bh).toFixed(1)+'" rx="3" fill="url(#barGrad)"><title>'+esc(r.bucket)+' · '+fmtTok(v)+' tokens · '+num(r.requests)+' 次</title></rect>';
+    return '<rect x="'+x.toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+Math.max(0,bh).toFixed(1)+'" rx="3" fill="url(#barGrad)"><title>'+esc(r.bucket)+' · '+fmtTok(v)+' tokens · '+num(r.requests)+osT(' 次',' requests')+'</title></rect>';
   }).join("");
   var grid="";
   for(var g=0;g<=4;g++){ var gy=padT+innerH-(innerH*g/4); var gv=Math.round(max*g/4); grid+='<line x1="'+padL+'" y1="'+gy+'" x2="'+(w-padR)+'" y2="'+gy+'" stroke="#223047" stroke-width="1" stroke-dasharray="3 5"></line><text x="'+(padL-8)+'" y="'+(gy+3)+'" fill="#8b98a9" font-size="10" text-anchor="end">'+fmtTok(gv)+'</text>'; }
@@ -423,34 +426,34 @@ function renderTrend(rows){
 function load(){
   var range=document.getElementById("range").value;
   var bucket=document.getElementById("bucket").value;
-  var msg=document.getElementById("msg"); msg.textContent="加载中…"; msg.className="msg";
+  var msg=document.getElementById("msg"); msg.textContent=osT("加载中…","Loading…"); msg.className="msg";
   fetch("/api/tokens?range="+encodeURIComponent(range)+"&bucket="+encodeURIComponent(bucket))
     .then(function(r){ if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); })
     .then(function(d){ render(d); msg.textContent=""; })
-    .catch(function(e){ msg.textContent="加载失败："+e.message; msg.className="msg bad"; });
+    .catch(function(e){ msg.textContent=osT("加载失败：","Load failed: ")+e.message; msg.className="msg bad"; });
 }
 function render(d){
   var t=d.totals||{};
   var total=t.totalTokens||0;
   document.getElementById("totalTokens").textContent=fmtTok(total);
-  document.getElementById("totalSub").textContent="输入 "+fmtTok(t.inputTokens)+" / 输出 "+fmtTok(t.outputTokens)+" · 缓存 "+fmtTok(t.cacheReadTokens);
-  document.getElementById("tokenRows").textContent=(t.tokenRequests||0)+" 条有 usage · "+(t.estimatedRequests||0)+" 条估算";
+  document.getElementById("totalSub").textContent=osT("输入 ","Input ")+fmtTok(t.inputTokens)+osT(" / 输出 "," / Output ")+fmtTok(t.outputTokens)+osT(" · 缓存 "," · Cache ")+fmtTok(t.cacheReadTokens);
+  document.getElementById("tokenRows").textContent=(t.tokenRequests||0)+osT(" 条有 usage · "," with usage · ")+(t.estimatedRequests||0)+osT(" 条估算"," estimated");
   document.getElementById("totalCost").textContent=fmtUsd(t.costUsd);
-  document.getElementById("costSub").textContent="按已知模型单价 · 含估算 · 不含订阅费";
+  document.getElementById("costSub").textContent=osT("按已知模型单价 · 含估算 · 不含订阅费","Known model prices · Includes estimates · Excludes subscriptions");
   var denom=(t.inputTokens||0)+(t.cacheReadTokens||0);
   var hit=denom?((t.cacheReadTokens||0)/denom):null;
   document.getElementById("cacheHit").textContent=hit==null?"—":pct(hit);
-  document.getElementById("cacheSub").textContent="缓存读取 "+fmtTok(t.cacheReadTokens)+" / 输入 "+fmtTok(t.inputTokens);
-  document.getElementById("cachePill").textContent=(t.cacheReadTokens||0)?fmtTok(t.cacheReadTokens):"无缓存";
+  document.getElementById("cacheSub").textContent=osT("缓存读取 ","Cache read ")+fmtTok(t.cacheReadTokens)+osT(" / 输入 "," / Input ")+fmtTok(t.inputTokens);
+  document.getElementById("cachePill").textContent=(t.cacheReadTokens||0)?fmtTok(t.cacheReadTokens):osT("无缓存","No cache");
   renderHeatmap(d.activity||[]);
   renderRhythm(d.rhythm||[]);
   var providers=(d.byProvider||[]).filter(function(p){return p.totalTokens>0 || (p.requests>0 && p.provider!=="unknown");});
   var activeAccounts=(d.byAccount||[]).filter(function(a){return a.totalTokens>0;}).length;
   var activeModels=(d.byModel||[]).filter(function(m){return m.totalTokens>0;}).length;
   document.getElementById("active").textContent=activeAccounts+" / "+activeModels;
-  document.getElementById("activeSub").textContent="账号 / 模型 · 连接数 "+num(t.requests);
-  document.getElementById("reqPill").textContent=num(t.requests)+" 次";
-  document.getElementById("providerMeta").textContent=" · "+providers.length+" 个供应商 · 记录 "+num(t.tokenRequests)+" / 估算 "+num(t.estimatedRequests);
+  document.getElementById("activeSub").textContent=osT("账号 / 模型 · 连接数 ","Accounts / models · Connections ")+num(t.requests);
+  document.getElementById("reqPill").textContent=num(t.requests)+osT(" 次"," requests");
+  document.getElementById("providerMeta").textContent=" · "+providers.length+osT(" 个供应商 · 记录 "," providers · Recorded ")+num(t.tokenRequests)+osT(" / 估算 "," / Estimated ")+num(t.estimatedRequests);
   document.getElementById("providerRows").innerHTML=providers.map(function(p){
     var share=total?(p.totalTokens/total):0;
     return '<tr><td><span class="dot" style="background:'+providerColor(p.provider)+'"></span><b>'+esc(providerLabel(p.provider))+'</b></td><td>'+num(p.requests)+'</td><td class="mono">'+fmtTok(p.inputTokens)+'</td><td class="mono">'+fmtTok(p.outputTokens)+'</td><td class="mono">'+fmtTok(p.cacheReadTokens)+'</td><td class="mono"><b>'+fmtTok(p.totalTokens)+'</b></td><td>'+pct(share)+'</td><td class="mono">'+fmtUsd(p.costUsd)+'</td></tr>';
@@ -458,14 +461,14 @@ function render(d){
 
   var labels={}; (d.accounts||[]).forEach(function(a){labels[a.id]=a.label||a.id;});
   var accounts=(d.byAccount||[]).filter(function(a){return a.totalTokens>0;}).slice(0,12);
-  document.getElementById("accountMeta").textContent=" · "+accounts.length+" 个账号/来源";
+  document.getElementById("accountMeta").textContent=" · "+accounts.length+osT(" 个账号/来源"," accounts / sources");
   document.getElementById("accountRows").innerHTML=accounts.map(function(a){
     var share=total?(a.totalTokens/total):0;
     return '<tr><td>'+esc(labels[a.accountId]||a.accountId)+'</td><td class="muted">'+esc(providerLabel(a.provider))+'</td><td>'+num(a.requests)+'</td><td class="mono"><b>'+fmtTok(a.totalTokens)+'</b></td><td>'+pct(share)+'</td></tr>';
   }).join("")||empty(5);
 
   var models=(d.byModel||[]).filter(function(m){return m.totalTokens>0;}).slice(0,12);
-  document.getElementById("modelMeta").textContent=" · "+models.length+" 个模型";
+  document.getElementById("modelMeta").textContent=" · "+models.length+osT(" 个模型"," models");
   document.getElementById("modelRows").innerHTML=models.map(function(m){
     var dnm=(m.inputTokens||0)+(m.cacheReadTokens||0);
     var ch=dnm?((m.cacheReadTokens||0)/dnm):null;
@@ -478,13 +481,13 @@ function render(d){
     return '<tr><td>'+esc(clientLabel(c.client))+'</td><td>'+num(c.requests)+'</td><td>'+num(c.tokenRequests)+'</td><td class="mono">'+fmtTok(c.totalTokens)+'</td><td>'+pct(share)+'</td></tr>';
   }).join("")||empty(5);
 
-  document.getElementById("trendMeta").textContent=" · "+(d.bucket==="hour"?"按小时":"按天")+" · 峰值 "+fmtTok(Math.max.apply(null,(d.byTime||[]).map(function(x){return x.totalTokens||0;}).concat([0])));
+  document.getElementById("trendMeta").textContent=" · "+(d.bucket==="hour"?osT("按小时","Hourly"):osT("按天","Daily"))+osT(" · 峰值 "," · Peak ")+fmtTok(Math.max.apply(null,(d.byTime||[]).map(function(x){return x.totalTokens||0;}).concat([0])));
   renderTrend(d.byTime||[]);
   cardSpark("sparkTotal",d.byTime,"totalTokens");
   cardSpark("sparkCost",d.byTime,"totalTokens");
   cardSpark("sparkCache",d.byTime,"cacheReadTokens");
   cardSpark("sparkReq",d.byTime,"requests");
-  document.getElementById("foot").textContent="OpenSelect · Token 统计 · 更新于 "+fmtT(d.now)+" · 每 15 秒自动刷新";
+  document.getElementById("foot").textContent=osT("OpenSelect · Token 统计 · 更新于 ","OpenSelect · Token usage · Updated ")+fmtT(d.now)+osT(" · 每 15 秒自动刷新"," · Refreshes every 15 seconds");
 }
 document.getElementById("range").onchange=function(){ document.getElementById("bucket").value=(this.value==="7d"||this.value==="30d"||this.value==="all")?"day":"hour"; load(); };
 document.getElementById("bucket").onchange=load;
@@ -492,6 +495,7 @@ document.getElementById("refresh").onclick=load;
 load();
 setInterval(load,15000);
 </script>
+${PAGE_LOCALE}
 </body>
 </html>`;
 }

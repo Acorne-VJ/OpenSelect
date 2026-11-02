@@ -1,3 +1,4 @@
+import { PAGE_LOCALE } from "./page_locale";
 import { UI_CSS, navHtml } from "./ui";
 
 /**
@@ -103,11 +104,11 @@ var initialized = false;
 function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;","'":"&#39;"}[c];}); }
 function num(n){ return (n==null||isNaN(n))?"0":Number(n).toLocaleString("zh-CN"); }
 function pct(p){ return (p==null||!isFinite(p))?"-":(p*100).toFixed(1)+"%"; }
-function ago(ts){ if(!ts) return "从未"; var s=Math.floor((Date.now()-ts)/1000); if(s<60) return s+"s 前"; var m=Math.floor(s/60); if(m<60) return m+"m"+(s%60)+"s 前"; var h=Math.floor(m/60); return h+"h"+(m%60)+"m 前"; }
+function ago(ts){ if(!ts) return osT("从未","Never"); var s=Math.floor((Date.now()-ts)/1000); if(s<60) return s+osT("s 前","s ago"); var m=Math.floor(s/60); if(m<60) return m+"m"+(s%60)+osT("s 前","s ago"); var h=Math.floor(m/60); return h+"h"+(m%60)+osT("m 前","m ago"); }
 function card(lbl,val){ return '<div class="card"><div class="lbl">'+lbl+'</div><div class="big">'+val+'</div></div>'; }
 function chip(s){ return '<span class="chip">'+esc(s)+'</span>'; }
 function load(){
-  fetch("/api/state").then(function(r){ return r.json(); }).then(function(s){ state=s; render(); }).catch(function(e){ document.getElementById("msg").textContent="加载失败："+e.message; document.getElementById("msg").className="msg err"; });
+  fetch("/api/state").then(function(r){ return r.json(); }).then(function(s){ state=s; render(); }).catch(function(e){ document.getElementById("msg").textContent=osT("加载失败：","Load failed: ")+e.message; document.getElementById("msg").className="msg err"; });
 }
 function render(){
   var s=state||{};
@@ -140,13 +141,13 @@ function render(){
   var ids=Object.keys(all);
   var pending=accounts.length-fetchedCount;
   var coverage=fetchedCount===0
-    ? '<span class="warn">尚未拉取</span>'
+    ? '<span class="warn">'+osT('尚未拉取','Not fetched')+'</span>'
     : pending
-      ? '<span class="warn">'+pending+' 个账号未拉取</span>'
+      ? '<span class="warn">'+pending+osT(' 个账号未拉取',' accounts not fetched')+'</span>'
       : diff
-        ? '<span class="warn">'+diff+' 个模型有组内差异</span>'
-        : '<span class="yes">各组内全部一致</span>';
-  document.getElementById("hdr").textContent=accounts.length+" 个账号 · "+ids.length+" 个模型"+(pending?" · "+pending+" 个未拉取":"")+" · 最近拉取 "+ago(lastTs);
+        ? '<span class="warn">'+diff+osT(' 个模型有组内差异',' models have differences')+'</span>'
+        : '<span class="yes">'+osT('各组内全部一致','All accounts match within each group')+'</span>';
+  document.getElementById("hdr").textContent=accounts.length+osT(" 个账号 · "," accounts · ")+ids.length+osT(" 个模型"," models")+(pending?" · "+pending+osT(" 个未拉取"," not fetched"):"")+osT(" · 最近拉取 "," · Last fetched: ")+ago(lastTs);
   document.getElementById("summary").innerHTML=
     card("账号数",num(accounts.length))+
     card("模型数",num(ids.length))+
@@ -158,10 +159,10 @@ function render(){
   if(fetchedCount===0){
     modelDetails.open=false;
     accountDetails.open=false;
-    document.getElementById("modelSummary").textContent="模型明细（尚未拉取）";
-    document.getElementById("accountSummary").textContent="账号覆盖（尚未拉取）";
-    document.getElementById("modelRows").innerHTML='<tr><td colspan="6" class="muted">点上方「刷新各账号可用模型」</td></tr>';
-    document.getElementById("accountRows").innerHTML='<tr><td colspan="5" class="muted">点上方「刷新各账号可用模型」</td></tr>';
+    document.getElementById("modelSummary").textContent=osT("模型明细（尚未拉取）","Model details (not fetched)");
+    document.getElementById("accountSummary").textContent=osT("账号覆盖（尚未拉取）","Account coverage (not fetched)");
+    document.getElementById("modelRows").innerHTML='<tr><td colspan="6" class="muted">'+osT('点上方「刷新各账号可用模型」','Select Refresh available models above')+'</td></tr>';
+    document.getElementById("accountRows").innerHTML='<tr><td colspan="5" class="muted">'+osT('点上方「刷新各账号可用模型」','Select Refresh available models above')+'</td></tr>';
     initialized=false;
     return;
   }
@@ -171,8 +172,8 @@ function render(){
     accountDetails.open=diff>0 || pending>0;
     initialized=true;
   }
-  document.getElementById("modelSummary").textContent=diff? ("模型差异（"+diff+" 个）") : ("全部模型（"+ids.length+" 个，各组内无差异）");
-  document.getElementById("accountSummary").textContent=pending? ("账号覆盖（"+pending+" 个未拉取）") : diff? "账号差异" : ("账号覆盖（"+fetchedCount+" 个，各组内一致）");
+  document.getElementById("modelSummary").textContent=diff? (osT("模型差异（","Model differences (")+diff+osT(" 个）",")")) : (osT("全部模型（","All models (")+ids.length+osT(" 个，各组内无差异）",", no differences)"));
+  document.getElementById("accountSummary").textContent=pending? (osT("账号覆盖（","Account coverage (")+pending+osT(" 个未拉取）"," not fetched)")) : diff? osT("账号差异","Account differences") : (osT("账号覆盖（","Account coverage (")+fetchedCount+osT(" 个，各组内一致）",", all consistent)"));
 
   var q=(document.getElementById("search").value||"").trim().toLowerCase();
   var onlyDiff=document.getElementById("onlyDiff").checked;
@@ -181,7 +182,7 @@ function render(){
     var provider=m.provider||"opencode-go";
     var groupKey=provider==="deepseek"?"deepseek-api":provider;
     if(provider==="auto"){
-      return { id:id, m:m, provider:provider, miss:[], avail:0, total:0, cov:"虚拟", last:0, virtual:true };
+      return { id:id, m:m, provider:provider, miss:[], avail:0, total:0, cov:osT("虚拟","Virtual"), last:0, virtual:true };
     }
     var gi=groupInfo[groupKey];
     var gAccounts=gi?gi.fetched:[];
@@ -204,17 +205,17 @@ function render(){
   document.getElementById("modelRows").innerHTML=rows.map(function(r){
     var pname=r.provider==="auto"?"Auto":r.provider==="zai"?"Z.ai":r.provider==="minimax"?"MiniMax":r.provider==="deepseek"?"DeepSeek":r.provider==="commandcode"?"Command Code":r.provider==="ollama"?"Ollama":"OpenCode";
     var missHtml=r.virtual
-      ? '<span class="muted">虚拟路由</span>'
+      ? '<span class="muted">'+osT("虚拟路由","Virtual route")+'</span>'
       : (r.miss.length
-          ? '<span title="'+esc(r.miss.map(function(a){return a.label||a.id;}).join("、"))+'">'+r.miss.slice(0,3).map(function(a){return chip(a.label||a.id);}).join("")+(r.miss.length>3?'<span class="muted"> 等 '+r.miss.length+' 个</span>':'')+'</span>'
+          ? '<span title="'+esc(r.miss.map(function(a){return a.label||a.id;}).join("、"))+'">'+r.miss.slice(0,3).map(function(a){return chip(a.label||a.id);}).join("")+(r.miss.length>3?'<span class="muted"> '+osT('等 ','and ')+r.miss.length+osT(' 个',' total')+'</span>':'')+'</span>'
           : '<span class="muted">—</span>');
     return '<tr><td><b>'+esc(r.m.name||r.id)+'</b> <span class="chip">'+esc(pname)+'</span><div class="mono muted" style="font-size:11px">'+esc(r.id)+'</div></td>'
-      + '<td>'+(r.m.free?'<span class="yes">免费</span>':'<span class="muted">—</span>')+'</td>'
+      + '<td>'+(r.m.free?'<span class="yes">'+osT("免费","Free")+'</span>':'<span class="muted">—</span>')+'</td>'
       + '<td class="mono">'+esc(r.cov)+'</td>'
       + '<td class="mono '+(r.miss.length?'warn':'yes')+'">'+(r.virtual?'—':pct(r.total?r.avail/r.total:0))+'</td>'
       + '<td>'+missHtml+'</td>'
       + '<td class="muted">'+(r.virtual?'—':ago(r.last))+'</td></tr>';
-  }).join("") || '<tr><td colspan="6" class="muted">'+(onlyDiff?'各组内全部一致，没有差异':'没有匹配的模型')+'</td></tr>';
+  }).join("") || '<tr><td colspan="6" class="muted">'+(onlyDiff?osT('各组内全部一致，没有差异','No differences'):osT('没有匹配的模型','No matching models'))+'</td></tr>';
 
   var accRows=accounts.map(function(a){
     var c=cache[a.id];
@@ -230,37 +231,38 @@ function render(){
   });
   document.getElementById("accountRows").innerHTML=accRows.map(function(r){
     var missHtml=!r.loaded
-      ? '<span class="muted">未拉取</span>'
+      ? '<span class="muted">'+osT("未拉取","Not fetched")+'</span>'
       : (r.miss.length
-          ? '<span title="'+esc(r.miss.join("、"))+'">'+r.miss.slice(0,4).map(function(id){return chip(id);}).join("")+(r.miss.length>4?'<span class="muted"> 等 '+r.miss.length+' 个</span>':'')+'</span>'
+          ? '<span title="'+esc(r.miss.join("、"))+'">'+r.miss.slice(0,4).map(function(id){return chip(id);}).join("")+(r.miss.length>4?'<span class="muted"> '+osT('等 ','and ')+r.miss.length+osT(' 个',' total')+'</span>':'')+'</span>'
           : '<span class="muted">—</span>');
     return '<tr><td>'+esc(r.a.label||r.a.id)+'</td>'
       + '<td class="mono">'+(r.loaded?r.avail+"/"+r.total:'—')+'</td>'
       + '<td class="mono '+(r.loaded&&r.miss.length?'warn':'yes')+'">'+(r.loaded?pct(r.total?r.avail/r.total:0):'—')+'</td>'
       + '<td>'+missHtml+'</td>'
       + '<td class="muted">'+(r.loaded?ago(r.ts):'—')+'</td></tr>';
-  }).join("") || '<tr><td colspan="5" class="muted">暂无账号</td></tr>';
+  }).join("") || '<tr><td colspan="5" class="muted">'+osT('暂无账号','No accounts')+'</td></tr>';
 }
 document.getElementById("search").oninput=render;
 document.getElementById("onlyDiff").onchange=render;
 document.getElementById("refresh").onclick=function(){
   var b=this; var msg=document.getElementById("msg");
-  b.disabled=true; msg.textContent="刷新中（逐账号 GET /v1/models）…"; msg.className="msg";
+  b.disabled=true; msg.textContent=osT("刷新中（逐账号 GET /v1/models）…","Refreshing (GET /v1/models per account)…"); msg.className="msg";
   fetch("/api/models/refresh",{method:"POST",headers:{"content-type":"application/json"},body:"{}"})
     .then(function(r){ return r.json(); })
     .then(function(j){
       b.disabled=false;
-      if(!j.ok){ msg.textContent=(j.error||"刷新失败"); msg.className="msg err"; return; }
+      if(!j.ok){ msg.textContent=(j.error||osT("刷新失败","Refresh failed")); msg.className="msg err"; return; }
       var ok=0, fail=0;
       var res=j.results||{};
       Object.keys(res).forEach(function(k){ if(res[k].ok) ok++; else fail++; });
-      msg.textContent="✓ 完成："+ok+" 个账号成功"+(fail?("，"+fail+" 个失败"):""); msg.className="msg ok";
+      msg.textContent=osT("✓ 完成：","✓ Complete: ")+ok+osT(" 个账号成功"," accounts succeeded")+(fail?(osT("，",", ")+fail+osT(" 个失败"," failed")):""); msg.className="msg ok";
       load();
     })
-    .catch(function(e){ b.disabled=false; msg.textContent="刷新失败："+e.message; msg.className="msg err"; });
+    .catch(function(e){ b.disabled=false; msg.textContent=osT("刷新失败：","Refresh failed: ")+e.message; msg.className="msg err"; });
 };
 load();
 </script>
+${PAGE_LOCALE}
 </body>
 </html>`;
 }

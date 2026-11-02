@@ -1,3 +1,4 @@
+import { PAGE_LOCALE } from "./page_locale";
 import { UI_CSS, navHtml, type NavKey } from "./ui";
 
 /**
@@ -56,14 +57,22 @@ function pct(p){ return (p==null||!isFinite(p))?"-":(p*100).toFixed(1)+"%"; }
 function dur(ms){ if(ms==null||ms<0||!isFinite(ms)) return "-"; var s=Math.floor(ms/1000); if(s<60) return s+"s"; var m=Math.floor(s/60); if(m<60) return m+"m"+(s%60)+"s"; var h=Math.floor(m/60); return h+"h"+(m%60)+"m"; }
 function fmtT(ts){ if(!ts) return "-"; var d=new Date(ts); return d.toLocaleString("zh-CN",{hour12:false,month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit"}); }
 function qs(obj){ return Object.keys(obj).filter(function(k){return obj[k]!=null&&obj[k]!=="";}).map(function(k){return encodeURIComponent(k)+"="+encodeURIComponent(obj[k]);}).join("&"); }
+function knownClientLabel(kind, fallback){
+  if(osLang!=="en") return fallback;
+  return {"anthropic-compat":"Anthropic-compatible client","openai-responses":"OpenAI Responses client","openai-compat":"OpenAI Chat-compatible client","other":"Other client"}[kind] || fallback;
+}
 function fillSelect(id, items, valueKey, labelKey){
   var el=document.getElementById(id); if(!el) return;
-  items.forEach(function(it){ var o=document.createElement("option"); o.value=it[valueKey]; o.textContent=it[labelKey]||it[valueKey]; el.appendChild(o); });
+  items.forEach(function(it){ var o=document.createElement("option"); o.value=it[valueKey]; o.textContent=id==="client"?knownClientLabel(it[valueKey],it[labelKey]||it[valueKey]):(it[labelKey]||it[valueKey]); el.appendChild(o); });
 }
+["client","account","from","to"].forEach(function(id){
+  var select=document.getElementById(id);
+  if(select && select.options[0] && select.options[0].value==="") select.options[0].textContent=osT("全部","All");
+});
 function pageButtons(total, offset, limit){
   var pages=Math.max(1,Math.ceil(total/limit));
   var page=Math.floor(offset/limit)+1;
-  document.getElementById("pageInfo").textContent="共 "+num(total)+" 条 · 第 "+page+"/"+pages+" 页";
+  document.getElementById("pageInfo").textContent=osT("共 ","Total: ")+num(total)+osT(" 条 · 第 "," · Page ")+page+"/"+pages+osT(" 页","");
   document.getElementById("prev").disabled=offset<=0;
   document.getElementById("next").disabled=offset+limit>=total;
 }
@@ -91,6 +100,7 @@ ${navHtml(active)}
 <script>${COMMON_JS}
 ${script}
 </script>
+${PAGE_LOCALE}
 </body>
 </html>`;
 }
@@ -126,7 +136,7 @@ function labels(){
 }
 function clientLabel(kind){
   var c=(meta.clients||[]).filter(function(x){return x.kind===kind;})[0];
-  return c?c.label:kind||"-";
+  return c?knownClientLabel(kind,c.label):kind||"-";
 }
 function loadMeta(){
   fetch("/api/state").then(function(r){return r.json();}).then(function(s){
@@ -134,7 +144,7 @@ function loadMeta(){
     fillSelect("client", meta.clients, "kind", "label");
     fillSelect("account", meta.accounts, "id", "label");
     load(0);
-  }).catch(function(e){ document.getElementById("rows").innerHTML='<tr><td colspan="9" class="bad">加载失败：'+esc(e.message)+'</td></tr>'; });
+  }).catch(function(e){ document.getElementById("rows").innerHTML='<tr><td colspan="9" class="bad">'+osT("加载失败：","Load failed: ")+esc(e.message)+'</td></tr>'; });
 }
 function params(offset){
   return qs({
@@ -154,7 +164,7 @@ function load(offset){
     curTotal=d.total||0;
     var s=d.summary||{};
     var rate=s.requests?s.ok/s.requests:0;
-    document.getElementById("hdr").textContent="范围 "+document.getElementById("range").value+" · 共 "+num(d.total)+" 条";
+    document.getElementById("hdr").textContent=osT("范围 ","Range: ")+document.getElementById("range").value+osT(" · 共 "," · Total: ")+num(d.total)+osT(" 条","");
     document.getElementById("summary").innerHTML=
       '<div class="card"><div class="lbl">请求数</div><div class="big">'+num(s.requests)+'</div></div>'+
       '<div class="card"><div class="lbl">成功率</div><div class="big">'+pct(rate)+'</div></div>'+
@@ -164,7 +174,7 @@ function load(offset){
     document.getElementById("rows").innerHTML=(d.rows||[]).map(function(x){
       var cls=x.status>=400?"bad":(x.attempts>1?"warn":"ok");
       var model=esc(x.model||"-")+(x.servedModel&&x.servedModel!==x.model?' <span class="ok">→ '+esc(x.servedModel)+'</span>':'');
-      var accText=acc[x.accountId]||(x.accountId==="zen-local"?"zen 本地":x.accountId==="-"? "未落账号":"失败尝试链");
+      var accText=acc[x.accountId]||(x.accountId==="zen-local"?osT("zen 本地","Local zen"):x.accountId==="-"? osT("未落账号","Unassigned"):osT("失败尝试链","Failed attempts"));
       return '<tr><td class="mono">'+fmtT(x.ts)+'</td>'
         +'<td>'+esc(clientLabel(x.client))+'</td>'
         +'<td>'+model+'</td>'
@@ -173,17 +183,17 @@ function load(offset){
         +'<td>'+x.attempts+'</td>'
         +'<td>'+dur(x.latencyMs)+'</td>'
         +'<td class="mono muted">'+esc(x.path||"-")+'</td>'
-        +'<td><button class="btn" onclick="toggleReq('+x.id+')">详情</button></td></tr>'
+        +'<td><button class="btn" onclick="toggleReq('+x.id+')">'+osT("详情","Details")+'</button></td></tr>'
         +'<tr id="d-'+x.id+'" class="detail" style="display:none"><td colspan="9"><div class="kv">'
-        +'<span>会话 <span class="mono">'+esc(x.sessionId||"-")+'</span></span>'
-        +'<span>账号 <span class="mono">'+esc(x.accountId||"-")+'</span></span>'
-        +'<span>家族 '+esc(x.family||"-")+'</span>'
-        +'<span>实际服务模型 '+esc(x.servedModel||x.model||"-")+'</span>'
-        +'<span>错误 '+esc(x.error||"-")+'</span>'
+        +'<span>'+osT('会话 ','Session ')+'<span class="mono">'+esc(x.sessionId||"-")+'</span></span>'
+        +'<span>'+osT('账号 ','Account ')+'<span class="mono">'+esc(x.accountId||"-")+'</span></span>'
+        +'<span>'+osT('家族 ','Protocol ')+esc(x.family||"-")+'</span>'
+        +'<span>'+osT('实际服务模型 ','Served model ')+esc(x.servedModel||x.model||"-")+'</span>'
+        +'<span>'+osT('错误 ','Error ')+esc(x.error||"-")+'</span>'
         +'</div></td></tr>';
-    }).join("") || '<tr><td colspan="9" class="muted">没有匹配的请求</td></tr>';
+    }).join("") || '<tr><td colspan="9" class="muted">'+osT('没有匹配的请求','No matching requests')+'</td></tr>';
     pageButtons(curTotal,curOffset,curLimit);
-  }).catch(function(e){ document.getElementById("rows").innerHTML='<tr><td colspan="9" class="bad">加载失败：'+esc(e.message)+'</td></tr>'; });
+  }).catch(function(e){ document.getElementById("rows").innerHTML='<tr><td colspan="9" class="bad">'+osT("加载失败：","Load failed: ")+esc(e.message)+'</td></tr>'; });
 }
 function toggleReq(id){ var e=document.getElementById("d-"+id); if(e) e.style.display=e.style.display==="none"?"table-row":"none"; }
 document.getElementById("apply").onclick=function(){ load(0); };
@@ -225,7 +235,7 @@ function loadMeta(){
     fillSelect("from", meta.accounts, "id", "label");
     fillSelect("to", meta.accounts, "id", "label");
     load(0);
-  }).catch(function(e){ document.getElementById("rows").innerHTML='<tr><td colspan="6" class="bad">加载失败：'+esc(e.message)+'</td></tr>'; });
+  }).catch(function(e){ document.getElementById("rows").innerHTML='<tr><td colspan="6" class="bad">'+osT("加载失败：","Load failed: ")+esc(e.message)+'</td></tr>'; });
 }
 function params(offset){
   return qs({
@@ -244,10 +254,10 @@ function load(offset){
   fetch("/api/switches?"+params(curOffset)).then(function(r){return r.json();}).then(function(d){
     curTotal=d.total||0;
     var s=d.summary||{total:0,reasons:[]};
-    var top=(s.reasons||[]).slice(0,3).map(function(x){return esc(x.reason)+' '+x.count;}).join(' · ')||'无';
+    var top=(s.reasons||[]).slice(0,3).map(function(x){return esc(x.reason)+' '+x.count;}).join(' · ')||osT('无','None');
     var kind=document.getElementById("kind").value;
-    var totalLabel=kind==="rebind"?"会话重绑次数":(kind==="all"?"切换记录数":"故障切换次数");
-    document.getElementById("hdr").textContent="范围 "+document.getElementById("range").value+" · 共 "+num(d.total)+" 条";
+    var totalLabel=kind==="rebind"?osT("会话重绑次数","Session rebinds"):(kind==="all"?osT("切换记录数","Switches"):osT("故障切换次数","Failovers"));
+    document.getElementById("hdr").textContent=osT("范围 ","Range: ")+document.getElementById("range").value+osT(" · 共 "," · Total: ")+num(d.total)+osT(" 条","");
     document.getElementById("summary").innerHTML=
       '<div class="card"><div class="lbl">'+totalLabel+'</div><div class="big">'+num(s.total)+'</div></div>'+
       '<div class="card"><div class="lbl">主要原因</div><div class="big" style="font-size:15px">'+top+'</div></div>'+
@@ -261,9 +271,9 @@ function load(offset){
         +'<td>'+esc(acc[x.toAccount]||x.toAccount||"-")+'</td>'
         +'<td><span class="pill '+cls+'">'+esc(x.reason||"-")+'</span></td>'
         +'<td class="muted" title="'+esc(x.detail||"")+'">'+esc(x.detail||"-")+'</td></tr>';
-    }).join("") || '<tr><td colspan="6" class="muted">没有匹配的切换记录</td></tr>';
+    }).join("") || '<tr><td colspan="6" class="muted">'+osT('没有匹配的切换记录','No matching switches')+'</td></tr>';
     pageButtons(curTotal,curOffset,curLimit);
-  }).catch(function(e){ document.getElementById("rows").innerHTML='<tr><td colspan="6" class="bad">加载失败：'+esc(e.message)+'</td></tr>'; });
+  }).catch(function(e){ document.getElementById("rows").innerHTML='<tr><td colspan="6" class="bad">'+osT("加载失败：","Load failed: ")+esc(e.message)+'</td></tr>'; });
 }
 document.getElementById("apply").onclick=function(){ load(0); };
 document.getElementById("refresh").onclick=function(){ load(curOffset); };

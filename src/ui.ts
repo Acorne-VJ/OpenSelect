@@ -19,8 +19,27 @@ export function navHtml(active: NavKey): string {
   return `<header class="top">
   <a class="brand" href="/">Open<span>Select</span></a>
   <nav>${links}</nav>
+  <button type="button" class="btn language-switch" id="languageSwitch" aria-label="Change language">English</button>
   <div class="right">${active === "dashboard" ? "" : '<a class="btn" href="/">返回控制台</a>'}</div>
-</header>`;
+</header>
+<script>
+var osLang = 'zh';
+try { if (localStorage.getItem('openselect.language') === 'en') osLang = 'en'; } catch (_) {}
+function osT(zh, en) { return osLang === 'en' ? en : zh; }
+document.documentElement.lang = osLang === 'en' ? 'en' : 'zh-CN';
+var osLanguageButton = document.getElementById('languageSwitch');
+osLanguageButton.textContent = osT('English', '中文');
+if (osLang === 'en') {
+  var osNav = {'/':'Dashboard','/stats':'Statistics','/tokens':'Tokens','/models':'Models','/requests':'Requests','/switches':'Switches','/routes':'Routes','/connect':'Connect','/settings':'Settings'};
+  document.querySelectorAll('header.top nav a').forEach(function (a) { a.textContent = osNav[a.getAttribute('href')] || a.textContent; });
+  var osBack = document.querySelector('header.top .right a');
+  if (osBack) osBack.textContent = 'Back to dashboard';
+}
+osLanguageButton.addEventListener('click', function () {
+  try { localStorage.setItem('openselect.language', osLang === 'en' ? 'zh' : 'en'); } catch (_) { return; }
+  location.reload();
+});
+</script>`;
 }
 
 export const UI_CSS = `
@@ -37,6 +56,7 @@ export const UI_CSS = `
   nav a:hover { color:var(--text); background:#182235; }
   nav a.active { color:#fff; background:#1b2a45; box-shadow:inset 0 0 0 1px #2c4b7d; }
   .top .right { margin-left:auto; display:flex; gap:8px; align-items:center; }
+  .language-switch { margin-left:auto; flex:0 0 auto; }
   main { max-width:1500px; margin:0 auto; padding:24px 26px 70px; min-width:0; }
   .hero { display:flex; justify-content:space-between; align-items:flex-end; gap:16px; flex-wrap:wrap; margin:6px 0 18px; }
   .hero h1 { margin:0; font-size:26px; letter-spacing:-.4px; }

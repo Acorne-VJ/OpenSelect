@@ -1,3 +1,4 @@
+import { PAGE_LOCALE } from "./page_locale";
 import {
   requestTotals,
   statsByAccount,
@@ -204,22 +205,22 @@ function pct(p){ return (p==null||!isFinite(p))?"-":(p*100).toFixed(1)+"%"; }
 function dur(ms){ if(ms==null||ms<0||!isFinite(ms)) return "-"; var s=Math.floor(ms/1000); if(s<60) return s+"s"; var m=Math.floor(s/60); if(m<60) return m+"m"+(s%60)+"s"; var h=Math.floor(m/60); return h+"h"+(m%60)+"m"; }
 function fmtT(ts){ if(!ts) return "-"; var d=new Date(ts); return d.toLocaleString("zh-CN",{hour12:false,month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit"}); }
 function short(s,n){ s=String(s||""); return s.length>n?s.slice(0,n-1)+"…":s; }
-function rangeLabel(r){ return r==="today"?"今天":r==="7d"?"最近 7 天":r==="30d"?"最近 30 天":"最近 24 小时"; }
+function rangeLabel(r){ return r==="today"?osT("今天","Today"):r==="7d"?osT("最近 7 天","Last 7 days"):r==="30d"?osT("最近 30 天","Last 30 days"):osT("最近 24 小时","Last 24 hours"); }
 function card(lbl,val){ return '<div class="card"><div class="lbl">'+lbl+'</div><div class="big">'+val+'</div></div>'; }
-function empty(cols){ return '<tr><td colspan="'+cols+'" class="muted">暂无数据</td></tr>'; }
+function empty(cols){ return '<tr><td colspan="'+cols+'" class="muted">'+osT('暂无数据','No data')+'</td></tr>'; }
 function statusClass(s){ if(s==="zen"||s==="失败") return "muted"; return (s==="冷却中"||s==="已限流"||s==="Key 无效"||s==="已禁用")?"bad":(s==="接近阈值"?"warn":"ok"); }
 function load(){
   var range=document.getElementById("range").value;
   var bucket=document.getElementById("bucket").value;
   var msg=document.getElementById("msg");
-  msg.textContent="加载中…"; msg.className="msg muted";
+  msg.textContent=osT("加载中…","Loading…"); msg.className="msg muted";
   fetch("/api/stats?range="+encodeURIComponent(range)+"&bucket="+encodeURIComponent(bucket))
     .then(function(r){ if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); })
     .then(function(d){ render(d); msg.textContent=""; })
-    .catch(function(e){ msg.textContent="加载失败："+e.message; msg.className="msg bad"; });
+    .catch(function(e){ msg.textContent=osT("加载失败：","Load failed: ")+e.message; msg.className="msg bad"; });
 }
 function render(d){
-  document.getElementById("hdr").textContent="范围 "+rangeLabel(d.range)+" · 粒度 "+(d.bucket==="hour"?"小时":"天")+" · 更新于 "+fmtT(d.now);
+  document.getElementById("hdr").textContent=osT("范围 ","Range: ")+rangeLabel(d.range)+osT(" · 粒度 "," · Interval: ")+(d.bucket==="hour"?osT("小时","hour"):osT("天","day"))+osT(" · 更新于 "," · Updated: ")+fmtT(d.now);
   var t=d.totals||{requests:0,ok:0,errors:0,avgLatencyMs:0,models:0,accounts:0};
   var rate=t.requests?t.ok/t.requests:0;
   document.getElementById("summary").innerHTML=
@@ -228,7 +229,7 @@ function render(d){
 
   var total=t.requests||1;
   var byModel=d.byModel||[];
-  document.getElementById("modelMeta").textContent=" · "+byModel.length+" 个模型";
+  document.getElementById("modelMeta").textContent=" · "+byModel.length+osT(" 个模型"," models");
   document.getElementById("modelRows").innerHTML=byModel.map(function(m){
     var req=(m.requestedModels||[]).filter(function(x){return x!==m.model;});
     return '<tr><td><b>'+esc(m.model)+'</b></td><td class="muted mono">'+esc(req.length?req.join(", "):"-")+'</td><td>'+num(m.requests)+'</td><td>'+pct(m.requests/total)+'</td><td class="ok">'+num(m.ok)+'</td><td class="bad">'+num(m.errors)+'</td><td>'+dur(m.avgLatencyMs)+'</td><td class="muted">'+fmtT(m.lastTs)+'</td></tr>';
@@ -240,21 +241,22 @@ function render(d){
   byAccount.forEach(function(a){
     if(accounts.some(function(x){return x.id===a.accountId;})) return;
     var extra = a.accountId==="zen-local"
-      ? {label:"zen 本地（不占账号）",status:"zen"}
+      ? {label:osT("zen 本地（不占账号）","Local zen (no account slot)"),status:"zen"}
       : a.accountId==="-"
-        ? {label:"未落账号（失败请求）",status:"失败"}
+        ? {label:osT("未落账号（失败请求）","Unassigned (failed requests)"),status:"失败"}
         : a.accountId==="__other__"
-          ? {label:"其他（失败尝试链）",status:"失败"}
+          ? {label:osT("其他（失败尝试链）","Other (failed attempts)"),status:"失败"}
           : {label:a.accountId,status:"未知"};
     accounts.push({id:a.accountId,label:extra.label,status:extra.status,pressure:0,cooldownLeftMs:0,usage:null});
   });
   accounts.sort(function(a,b){ var ra=(statMap[a.id]||{}).requests||0, rb=(statMap[b.id]||{}).requests||0; return rb-ra; });
-  document.getElementById("accountMeta").textContent=" · "+accounts.length+" 个账号/来源";
+  document.getElementById("accountMeta").textContent=" · "+accounts.length+osT(" 个账号/来源"," accounts / sources");
   document.getElementById("accountRows").innerHTML=accounts.map(function(a){
     var s=statMap[a.id]||{requests:0,ok:0,errors:0,avgLatencyMs:0,lastTs:0};
     var u=a.usage||{};
-    var usage=[["5h",u.rolling],["周",u.weekly],["月",u.monthly]].map(function(x){ return x[0]+" "+pct(x[1]&&x[1].percent); }).join(" / ");
-    var stText=a.status+(a.cooldownLeftMs>0?" · "+dur(a.cooldownLeftMs):"");
+    var usage=[["5h",u.rolling],[osT("周","week"),u.weekly],[osT("月","month"),u.monthly]].map(function(x){ return x[0]+" "+pct(x[1]&&x[1].percent); }).join(" / ");
+    var statusLabels={"正常":"Healthy","已禁用":"Disabled","Key 无效":"Invalid key","冷却中":"Cooling down","已限流":"Rate limited","接近阈值":"Near threshold","失败":"Failed","未知":"Unknown"};
+    var stText=(osLang==="en"?(statusLabels[a.status]||a.status):a.status)+(a.cooldownLeftMs>0?" · "+dur(a.cooldownLeftMs):"");
     return '<tr><td>'+esc(a.label||a.id)+'</td><td>'+num(s.requests)+'</td><td>'+pct(s.requests/total)+'</td><td class="ok">'+num(s.ok)+'</td><td class="bad">'+num(s.errors)+'</td><td>'+dur(s.avgLatencyMs)+'</td><td class="muted">'+fmtT(s.lastTs)+'</td><td class="mono">'+esc(usage)+'</td><td><span class="'+statusClass(a.status)+'">'+esc(stText)+'</span></td></tr>';
   }).join("")||empty(9);
 
@@ -263,7 +265,7 @@ function render(d){
   renderMatrix("modelAccountMatrix",maRows,(d.accounts||[]).map(function(a){return a.id;}),"模型",labels);
   renderMatrix("modelMatrix",d.byTimeModel,byModel.slice(0,10).map(function(m){return m.model;}),"时间",{});
   renderMatrix("accountMatrix",d.byTimeAccount,(d.accounts||[]).map(function(a){return a.id;}),"时间",labels);
-  document.getElementById("foot").textContent="统计只读 · 每 15 秒自动刷新 · 时间按本机时区（"+new Date().toLocaleTimeString("zh-CN",{hour12:false})+"）";
+  document.getElementById("foot").textContent=osT("统计只读 · 每 15 秒自动刷新 · 时间按本机时区（","Read only · Refreshes every 15 seconds · Local time (")+new Date().toLocaleTimeString("zh-CN",{hour12:false})+osT("）",")");
 }
 function renderMatrix(id,rows,columns,firstLabel,labels){
   var table=document.getElementById(id);
@@ -283,7 +285,7 @@ function renderMatrix(id,rows,columns,firstLabel,labels){
     var sum=columns.reduce(function(a,c){return a+((data[b]||{})[c]||0);},0)+other;
     return '<tr><td class="mono">'+esc(b)+'</td>'+cells+'<td class="'+(other?"":"muted")+'">'+(other||"—")+'</td><td>'+sum+'</td></tr>';
   }).join("");
-  table.innerHTML=head+'<tbody>'+(body||'<tr><td colspan="'+(columns.length+3)+'" class="muted">暂无数据</td></tr>')+'</tbody>';
+  table.innerHTML=head+'<tbody>'+(body||'<tr><td colspan="'+(columns.length+3)+'" class="muted">'+osT('暂无数据','No data')+'</td></tr>')+'</tbody>';
 }
 document.getElementById("range").onchange=function(){
   document.getElementById("bucket").value=(this.value==="7d"||this.value==="30d")?"day":"hour";
@@ -294,6 +296,7 @@ document.getElementById("refresh").onclick=load;
 load();
 setInterval(load,15000);
 </script>
+${PAGE_LOCALE}
 </body>
 </html>`;
 }

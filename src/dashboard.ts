@@ -22,6 +22,7 @@ import { requestsPage, switchesPage } from "./logs";
 import { isProviderIntegration, providerModelIds, PROVIDER_LABELS } from "./providers";
 import { pricingTablesHtml } from "./pricing";
 import { UI_CSS, navHtml } from "./ui";
+import { DASHBOARD_EN, PRICING_EN } from "./dashboard_locale";
 
 /** per-account available-model cache (populated on demand via /api/models/refresh) */
 const modelCache = new Map<string, { ts: number; ids: string[] }>();
@@ -284,6 +285,27 @@ ${navHtml("dashboard")}
 </main>
 <footer id="foot"></footer>
 <script>
+if (osLang === "en") {
+  var dashboardEnglish = ${JSON.stringify(DASHBOARD_EN)};
+  var pricingEnglish = ${JSON.stringify(PRICING_EN)};
+  var dashboardWalker = document.createTreeWalker(document.querySelector('main'), NodeFilter.SHOW_TEXT);
+  var dashboardText;
+  while ((dashboardText = dashboardWalker.nextNode())) {
+    var originalText = dashboardText.nodeValue;
+    var trimmedText = originalText.trim();
+    if (dashboardText.parentElement && dashboardText.parentElement.closest(".pricing")) {
+      pricingEnglish.forEach(function(pair) { originalText = originalText.split(pair[0]).join(pair[1]); });
+      dashboardText.nodeValue = originalText;
+      continue;
+    }
+    if (Object.prototype.hasOwnProperty.call(dashboardEnglish, trimmedText)) {
+      dashboardText.nodeValue = originalText.replace(trimmedText, dashboardEnglish[trimmedText]);
+    }
+  }
+  document.getElementById('addLabel').placeholder = 'e.g. go-03 (optional)';
+  document.getElementById('addKey').placeholder = 'Paste account key';
+  document.getElementById('addCustom').placeholder = 'OpenCode integration ID, e.g. anthropic';
+}
 function parseAlerts(v){ return String(v||"").split(/[,，\\s]+/).filter(Boolean).map(function(x){ return Number(x); }); }
 var BACKUP_DIR_TEXT = ${JSON.stringify(BACKUP_DIR)};
 var CLIENT_LABELS = ${JSON.stringify(CLIENT_LABELS)};
@@ -292,11 +314,11 @@ function num(n){ return (n==null||isNaN(n))?"0":Number(n).toLocaleString("zh-CN"
 function usd(n){ return (n==null||!isFinite(n))?"—":"$"+Number(n).toFixed(4); }
 function pct(p){ return p==null ? "-" : (p*100).toFixed(1)+"%"; }
 function dur(ms){ if(ms==null||ms<0||!isFinite(ms)) return "-"; var s=Math.floor(ms/1000); if(s<60) return s+"s"; var m=Math.floor(s/60); if(m<60) return m+"m"+(s%60)+"s"; var h=Math.floor(m/60); return h+"h"+(m%60)+"m"; }
-function ago(ts){ if(!ts) return "从未"; return dur(Date.now()-ts)+"前"; }
+function ago(ts){ if(!ts) return osT("从未", "never"); return dur(Date.now()-ts)+osT("前", " ago"); }
 function fmtT(ts){ if(!ts) return "-"; var d=new Date(ts); return d.toLocaleString("zh-CN",{hour12:false,month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit"}); }
 function fmtReset(x){ if(!x) return "-"; try { return new Date(x).toLocaleString("zh-CN",{hour12:false,month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"}); } catch(e){ return x; } }
 /** 距离重置还有多久（上游给的是 UTC 绝对时刻，这里按本机时区换算成倒计时，便于和官方页的 "Resets in Xh" 对照） */
-function fmtIn(x){ if(!x) return ""; var t=new Date(x).getTime(); if(isNaN(t)) return ""; var ms=t-Date.now(); if(ms<=0) return "已过"; var m=Math.floor(ms/60000); if(m<60) return m+"m 后"; var h=Math.floor(m/60); if(h<24) return h+"h"+(m%60? (m%60)+"m":"")+" 后"; var d=Math.floor(h/24); return d+"d"+(h%24? (h%24)+"h":"")+" 后"; }
+function fmtIn(x){ if(!x) return ""; var t=new Date(x).getTime(); if(isNaN(t)) return ""; var ms=t-Date.now(); if(ms<=0) return osT("已过","elapsed"); var m=Math.floor(ms/60000); if(m<60) return (osLang==="en"?"in ":"")+m+"m"+osT(" 后",""); var h=Math.floor(m/60); if(h<24) return (osLang==="en"?"in ":"")+h+"h"+(m%60? (m%60)+"m":"")+osT(" 后",""); var d=Math.floor(h/24); return (osLang==="en"?"in ":"")+d+"d"+(h%24? (h%24)+"h":"")+osT(" 后",""); }
 /** 本机时区（重置时间按本机时区显示，避免与上游 UTC 时刻混淆） */
 function tzLabel(){ try { var off=-new Date().getTimezoneOffset(); var sign=off>=0?"+":"-"; var a=Math.abs(off); return "UTC"+sign+Math.floor(a/60)+(a%60? ":"+("0"+a%60).slice(-2):""); } catch(e){ return ""; } }
 /**
@@ -318,8 +340,8 @@ function pillClass(a){
 }
 function winRow(label, w){
   var rel = w && w.resetsAt ? fmtIn(w.resetsAt) : '';
-  var reset = w && w.resetsAt ? ' · 重置 '+fmtReset(w.resetsAt)+(rel? '（'+rel+'）':'') : '';
-  return '<div class="win"><div class="lbl"><span>'+label+(w&&w.status==="rate-limited"?' <span style="color:#f85149">已限流</span>':'')+'</span><span>'+esc(reset)+'</span></div>'+bar(w?w.percent:null, w?w.status:"")+'</div>';
+  var reset = w && w.resetsAt ? osT(' · 重置 ',' · Resets ')+fmtReset(w.resetsAt)+(rel? ' ('+rel+')':'') : '';
+  return '<div class="win"><div class="lbl"><span>'+label+(w&&w.status==="rate-limited"?' <span style="color:#f85149">'+osT('已限流','Rate limited')+'</span>':'')+'</span><span>'+esc(reset)+'</span></div>'+bar(w?w.percent:null, w?w.status:"")+'</div>';
 }
 /** 账号卡：三窗口并排的紧凑用量条（账号多时单卡高度约减半） */
 function winMini(label, w){
@@ -330,11 +352,11 @@ function winMini(label, w){
   var full = (w && w.resetsAt) ? fmtReset(w.resetsAt) : "";
   return '<div class="u"><div class="lbl"><span>'+label+'</span><b>'+pct(p)+'</b></div>'
     + '<div class="track"><i class="'+cls+'" style="width:'+wd+'%"></i></div>'
-    + '<div class="sub" title="'+(full?('重置 '+esc(full)):'')+'">'+(w&&w.status==="rate-limited"?'已限流 · ':'')+((w&&w.resetsAt)?'↻ ':'')+esc(reset)+'</div></div>';
+    + '<div class="sub" title="'+(full?(osT('重置 ','Resets ')+esc(full)):'')+'">'+(w&&w.status==="rate-limited"?osT('已限流 · ','Rate limited · '):'')+((w&&w.resetsAt)?'↻ ':'')+esc(reset)+'</div></div>';
 }
 var SPARK_SERIES = [["rolling","#58a6ff"],["weekly","#d2a8ff"],["monthly","#7ee787"]];
 function spark(hist, threshold){
-  if(!hist || hist.length < 2) return '<div class="more">用量曲线：已积累 '+((hist||[]).length)+' 个采样（每 45s 一个，≥2 后显示走势）</div>';
+  if(!hist || hist.length < 2) return '<div class="more">'+osT('用量曲线：已积累 ','Usage history: ')+((hist||[]).length)+osT(' 个采样（每 45s 一个，≥2 后显示走势）',' samples (one every 45s; at least 2 needed)')+'</div>';
   var H = 34, W = 100;
   function line(key){
     var pts = [];
@@ -351,7 +373,7 @@ function spark(hist, threshold){
     return '<polyline fill="none" stroke="'+c[1]+'" stroke-width="1.2" vector-effect="non-scaling-stroke" points="'+line(c[0])+'"></polyline>';
   }).join("");
   var legend = SPARK_SERIES.map(function(c){ return '<span><i style="background:'+c[1]+'"></i>'+c[0]+'</span>'; }).join("")
-    + '<span style="margin-left:auto">阈值 '+(threshold*100).toFixed(0)+'%</span>';
+    + '<span style="margin-left:auto">'+osT('阈值 ','Threshold ')+(threshold*100).toFixed(0)+'%</span>';
   return '<div class="spark"><svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none">'
     + '<line x1="0" y1="'+ty+'" x2="'+W+'" y2="'+ty+'" stroke="#f85149" stroke-dasharray="3,2" stroke-width="0.6" vector-effect="non-scaling-stroke" opacity="0.8"></line>'
     + polys + '</svg><div class="lg">'+legend+'</div></div>';
@@ -373,8 +395,8 @@ var PLAN_OPTIONS={
 function planOptionsFor(integration){ return PLAN_OPTIONS[integration]||[]; }
 function planOptionsHtml(integration, selected){
   var opts=planOptionsFor(integration);
-  if(!opts.length) return '<option value="">未设置</option>';
-  return '<option value="">未设置</option>'+opts.map(function(o){return '<option value="'+esc(o[0])+'"'+(o[0]===selected?' selected':'')+'>'+esc(o[1])+'</option>';}).join("");
+  if(!opts.length) return '<option value="">'+osT('未设置','Not set')+'</option>';
+  return '<option value="">'+osT('未设置','Not set')+'</option>'+opts.map(function(o){return '<option value="'+esc(o[0])+'"'+(o[0]===selected?' selected':'')+'>'+esc(o[1])+'</option>';}).join("");
 }
 function updatePlanOptions(integration){
   var row=document.getElementById("addPlanRow"), sel=document.getElementById("addPlan");
@@ -387,11 +409,12 @@ function buildTypes(s){
   if(__typeBuilt || !s.integrationOptions) return;
   var sel=document.getElementById("addType");
   s.integrationOptions.forEach(function(o){
-    var op=document.createElement("option"); op.value=o.id; op.textContent=o.name;
+    var englishIntegrations = {"opencode-go":"OpenCode Go (usage monitoring + failover)","google":"Google / Gemini (credentials only)","opencode":"OpenCode Console (credentials only)","anthropic":"Anthropic (credentials only)","openai":"OpenAI (credentials only)","deepseek":"DeepSeek (credentials only)","deepseek-api":"DeepSeek (direct, fallback only)","xai":"xAI (credentials only)","zai":"Z.ai GLM (direct, 5h/week usage)","minimax":"MiniMax M Plan (direct, 5h/week usage)","commandcode":"Command Code Provider (direct, API key)","ollama":"Ollama Cloud (API key)"};
+    var op=document.createElement("option"); op.value=o.id; op.textContent=osLang === "en" ? (englishIntegrations[o.id]||o.name) : o.name;
     if(o.id==="opencode-go") op.selected=true;
     sel.appendChild(op);
   });
-  var op=document.createElement("option"); op.value="__custom__"; op.textContent="其他集成（自定义 ID）…";
+  var op=document.createElement("option"); op.value="__custom__"; op.textContent=osT("其他集成（自定义 ID）…", "Other integration (custom ID)…");
   sel.appendChild(op);
   sel.onchange=function(){
     document.getElementById("addCustomRow").style.display = this.value==="__custom__" ? "flex" : "none";
@@ -404,10 +427,10 @@ function renderCredentials(s){
   var list=(s.accounts||[]).filter(function(a){return !isPoolAcct(a);});
   var meta=document.getElementById("credMeta"), rows=document.getElementById("credRows");
   if(!meta || !rows) return;
-  meta.textContent=" · "+list.length+" 个";
+  meta.textContent=" · "+list.length+osT(" 个", "");
   rows.innerHTML=list.map(function(a){
-    return '<tr><td>'+esc(a.label||a.id)+'</td><td class="muted">'+esc(a.integration)+'</td><td class="mono">'+esc(a.keyMasked||"")+'</td><td><span class="pill dim">仅凭据</span></td><td><button class="btn sm danger" onclick="delAcct('+q(a.id)+')">删除</button></td></tr>';
-  }).join("") || '<tr><td colspan="5" class="muted">暂无仅凭据账号</td></tr>';
+    return '<tr><td>'+esc(a.label||a.id)+'</td><td class="muted">'+esc(a.integration)+'</td><td class="mono">'+esc(a.keyMasked||"")+'</td><td><span class="pill dim">'+osT('仅凭据','Credentials only')+'</span></td><td><button class="btn sm danger" onclick="delAcct('+q(a.id)+')">'+osT('删除','Delete')+'</button></td></tr>';
+  }).join("") || '<tr><td colspan="5" class="muted">'+osT('暂无仅凭据账号','No credentials-only accounts')+'</td></tr>';
 }
 function renderModels(s){
   var wrap=document.getElementById("modelsWrap"), meta=document.getElementById("modelsMeta");
@@ -423,7 +446,7 @@ function renderModels(s){
     var list=groups[g];
     var fetched=list.filter(function(a){return cache[a.id];});
     pending += list.length-fetched.length;
-    if(!fetched.length){ parts.push('<b>'+esc(names[g]||g)+'</b> 未拉取'); return; }
+    if(!fetched.length){ parts.push('<b>'+esc(names[g]||g)+'</b> '+osT('未拉取','Not fetched')); return; }
     fetchedAll += fetched.length;
     var union={};
     fetched.forEach(function(a){ (cache[a.id].ids||[]).forEach(function(id){ union[id]=1; }); });
@@ -435,15 +458,15 @@ function renderModels(s){
     totalDiff += diff;
     lastTs=Math.max.apply(null, fetched.map(function(a){return cache[a.id].ts;}).concat([lastTs]));
     parts.push('<b>'+esc(names[g]||g)+'</b> '+fetched.length+'×'+ids.length
-      +(diff?' <span style="color:#d29922">差异 '+diff+'</span>':' <span class="yes">一致</span>'));
+      +(diff?' <span style="color:#d29922">'+osT('差异 ','Differences ')+diff+'</span>':' <span class="yes">'+osT('一致','Match')+'</span>'));
   });
-  if(!fetchedAll){ meta.textContent=""; wrap.className="more"; wrap.textContent="尚未拉取 —— 点“刷新”获取每个账号实际可用模型（含免费标记）。各账号模型可能不同。"; return; }
-  meta.textContent=" · 最近拉取 "+ago(lastTs);
+  if(!fetchedAll){ meta.textContent=""; wrap.className="more"; wrap.textContent=osT("尚未拉取 —— 点“刷新”获取每个账号实际可用模型（含免费标记）。各账号模型可能不同。","Not fetched yet — refresh to retrieve available models for each account."); return; }
+  meta.textContent=osT(" · 最近拉取 "," · Last fetched ")+ago(lastTs);
   wrap.className="more";
   wrap.innerHTML=parts.join(' · ')
-    +(pending?' · <span style="color:#d29922">'+pending+' 个账号未拉取</span>':'')
-    +' · <a href="/models" target="_blank">查看完整可用性 →</a>'
-    +(totalDiff?'<div class="more" style="margin-top:4px">组内差异已收进独立页；主面板不再铺账号矩阵。</div>':'');
+    +(pending?' · <span style="color:#d29922">'+pending+osT(' 个账号未拉取',' accounts not fetched')+'</span>':'')
+    +' · <a href="/models" target="_blank">'+osT('查看完整可用性 →','View model availability →')+'</a>'
+    +(totalDiff?'<div class="more" style="margin-top:4px">'+osT('组内差异已收进独立页；主面板不再铺账号矩阵。','View account differences on the models page.')+'</div>':'');
 }
 function isPoolAcct(a){
   return a.integration==="opencode-go" || a.integration==="zai" || a.integration==="minimax" || a.integration==="deepseek-api" || a.integration==="commandcode" || a.integration==="ollama";
@@ -463,32 +486,32 @@ function accountUsable(a){
 }
 function pinClient(kind, accountId){
   api("POST","/api/clients/pin",{client:kind, accountId: accountId||null}).then(function(r){
-    if(r.status!==200||!r.j.ok){ alert((r.j&&r.j.error)||"操作失败"); return; }
+    if(r.status!==200||!r.j.ok){ alert((r.j&&r.j.error)||osT("操作失败","Operation failed")); return; }
     refresh();
   });
 }
 function clearCooldown(id){
   api("POST","/api/accounts/"+encodeURIComponent(id),{clearCooldown:true}).then(function(r){
-    if(r.status!==200||!r.j.ok){ alert((r.j&&r.j.error)||"清除失败"); return; }
+    if(r.status!==200||!r.j.ok){ alert((r.j&&r.j.error)||osT("清除失败","Failed to clear cooldown")); return; }
     refresh();
   });
 }
 function setPlan(id, plan){
   api("POST","/api/accounts/"+encodeURIComponent(id),{plan: plan||null}).then(function(r){
-    if(r.status!==200||!r.j.ok){ alert((r.j&&r.j.error)||"套餐设置失败"); return; }
+    if(r.status!==200||!r.j.ok){ alert((r.j&&r.j.error)||osT("套餐设置失败","Failed to update plan")); return; }
     refresh();
   });
 }
 function forceAcct(id){
   api("POST","/api/accounts/force",{accountId:id}).then(function(r){
-    if(r.status!==200||!r.j.ok){ alert((r.j&&r.j.error)||"操作失败"); return; }
+    if(r.status!==200||!r.j.ok){ alert((r.j&&r.j.error)||osT("操作失败","Operation failed")); return; }
     refresh();
   });
 }
 function delAcct(id){
-  if(!confirm("删除账号 "+id+"？（仅从 OpenSelect 移除，不影响 opencode 凭据）")) return;
+  if(!confirm(osT("删除账号 "+id+"？（仅从 OpenSelect 移除，不影响 opencode 凭据）", "Remove account "+id+" from OpenSelect? OpenCode credentials will not be changed."))) return;
   api("DELETE","/api/accounts/"+encodeURIComponent(id)).then(function(r){
-    if(r.status!==200||!r.j.ok){ alert((r.j&&r.j.error)||"删除失败"); }
+    if(r.status!==200||!r.j.ok){ alert((r.j&&r.j.error)||osT("删除失败","Delete failed")); }
     refresh();
   });
 }
@@ -504,73 +527,73 @@ function bindActions(){
       plan: (document.getElementById("addPlan")||{}).value || undefined,
       connect: document.getElementById("addConnect").checked
     };
-    if(!payload.key){ setMsg("addMsg","请填写 Key","err"); return; }
-    b.disabled=true; setMsg("addMsg","校验中…（拉取官方用量）");
+    if(!payload.key){ setMsg("addMsg",osT("请填写 Key","Enter an API key"),"err"); return; }
+    b.disabled=true; setMsg("addMsg",osT("校验中…（拉取官方用量）","Validating and fetching usage…"));
     api("POST","/api/accounts",payload).then(function(r){
       b.disabled=false;
-      if(r.status!==200||!r.j.ok){ setMsg("addMsg",(r.j&&r.j.error)||("失败 HTTP "+r.status),"err"); return; }
+      if(r.status!==200||!r.j.ok){ setMsg("addMsg",(r.j&&r.j.error)||(osT("失败 HTTP ","Failed HTTP ")+r.status),"err"); return; }
       var j=r.j, parts=[];
-      parts.push((j.added?"✓ 已添加 ":"已存在 ")+j.account.id+"（"+j.account.keyMasked+"）");
+      parts.push((j.added?osT("✓ 已添加 ","✓ Added "):osT("已存在 ","Already exists "))+j.account.id+" ("+j.account.keyMasked+")");
       if(j.usage) parts.push("rolling "+pct(j.usage.rolling.percent)+" / weekly "+pct(j.usage.weekly.percent)+" / monthly "+pct(j.usage.monthly.percent));
-      if(j.checkError) parts.push("用量校验失败: "+String(j.checkError).slice(0,80));
-      if(j.opencode&&j.opencode.attempted) parts.push(j.opencode.ok?"已注册 opencode 凭据":"opencode 注册失败: "+String(j.opencode.detail).slice(0,80));
+      if(j.checkError) parts.push(osT("用量校验失败: ","Usage check failed: ")+String(j.checkError).slice(0,80));
+      if(j.opencode&&j.opencode.attempted) parts.push(j.opencode.ok?osT("已注册 opencode 凭据","OpenCode credentials registered"):osT("opencode 注册失败: ","OpenCode registration failed: ")+String(j.opencode.detail).slice(0,80));
       if(j.poolHint) parts.push(j.poolHint);
       setMsg("addMsg", parts.join(" · "), j.checkError?"err":"ok");
       if(j.added){ document.getElementById("addKey").value=""; refresh(); }
-    }, function(){ b.disabled=false; setMsg("addMsg","网络错误","err"); });
+    }, function(){ b.disabled=false; setMsg("addMsg",osT("网络错误","Network error"),"err"); });
   };
   document.getElementById("setSwitch").oninput=function(){ document.getElementById("setSwitchVal").textContent=Number(this.value).toFixed(1)+"%"; };
   document.getElementById("setBtn").onclick=function(){
     var b=this;
     var payload={ switchAt: Number(document.getElementById("setSwitch").value)/100, pollSec: Number(document.getElementById("setPoll").value), autoActivate: document.getElementById("setAuto").checked, alertAt: document.getElementById("setAlert").value.split(/[,，\\s]+/).filter(Boolean).map(function(x){ return Number(x); }), alertAtByWindow: { rolling: parseAlerts(document.getElementById("setAlertR").value), weekly: parseAlerts(document.getElementById("setAlertW").value), monthly: parseAlerts(document.getElementById("setAlertM").value) }, alertQuiet: (function(){ var f=document.getElementById("setQuietFrom").value, t=document.getElementById("setQuietTo").value; return (f&&t)?{from:f,to:t}:null; })() };
-    b.disabled=true; setMsg("setMsg","保存中…");
+    b.disabled=true; setMsg("setMsg",osT("保存中…","Saving…"));
     api("POST","/api/settings",payload).then(function(r){
       b.disabled=false;
-      if(r.status!==200||!r.j.ok){ setMsg("setMsg",(r.j&&r.j.error)||("失败 HTTP "+r.status),"err"); return; }
-      setMsg("setMsg","✓ 已保存并热生效","ok"); refresh();
-    }, function(){ b.disabled=false; setMsg("setMsg","网络错误","err"); });
+      if(r.status!==200||!r.j.ok){ setMsg("setMsg",(r.j&&r.j.error)||(osT("失败 HTTP ","Failed HTTP ")+r.status),"err"); return; }
+      setMsg("setMsg",osT("✓ 已保存并热生效","✓ Saved and applied"),"ok"); refresh();
+    }, function(){ b.disabled=false; setMsg("setMsg",osT("网络错误","Network error"),"err"); });
   };
   function doBackup(sign){
     var b=document.getElementById(sign?"backupSignBtn":"backupBtn");
-    b.disabled=true; setMsg("backupMsg", sign?"备份并签名中…":"备份中…");
+    b.disabled=true; setMsg("backupMsg", sign?osT("备份并签名中…","Backing up and signing…"):osT("备份中…","Backing up…"));
     api("POST","/api/backup",{sign:!!sign}).then(function(r){
       b.disabled=false;
-      if(r.status!==200||!r.j.ok){ setMsg("backupMsg",(r.j&&r.j.error)||("失败 HTTP "+r.status),"err"); return; }
-      setMsg("backupMsg","✓ 已备份"+(r.j.signed?"并签名":""),"ok");
+      if(r.status!==200||!r.j.ok){ setMsg("backupMsg",(r.j&&r.j.error)||(osT("失败 HTTP ","Failed HTTP ")+r.status),"err"); return; }
+      setMsg("backupMsg",osT("✓ 已备份","✓ Backup complete")+(r.j.signed?osT("并签名"," and signed"):""),"ok");
       refresh();
-    }, function(){ b.disabled=false; setMsg("backupMsg","网络错误","err"); });
+    }, function(){ b.disabled=false; setMsg("backupMsg",osT("网络错误","Network error"),"err"); });
   }
   document.getElementById("backupBtn").onclick=function(){ doBackup(false); };
   document.getElementById("backupSignBtn").onclick=function(){ doBackup(true); };
   document.getElementById("wireBtn").onclick=function(){
-    var b=this; b.disabled=true; setMsg("wireMsg","注入中…");
+    var b=this; b.disabled=true; setMsg("wireMsg",osT("注入中…","Connecting…"));
     api("POST","/api/wire",{}).then(function(r){
       b.disabled=false;
-      if(r.status!==200||!r.j.ok){ setMsg("wireMsg",(r.j&&r.j.error)||"失败","err"); return; }
-      setMsg("wireMsg", r.j.changed>0 ? ("✓ 已注入 "+r.j.changed+" 个模型（共 "+r.j.models+"）· 重启 opencode 生效") : "已是最新，无需变更", "ok");
+      if(r.status!==200||!r.j.ok){ setMsg("wireMsg",(r.j&&r.j.error)||osT("失败","Failed"),"err"); return; }
+      setMsg("wireMsg", r.j.changed>0 ? osT("✓ 已注入 "+r.j.changed+" 个模型（共 "+r.j.models+"）· 重启 opencode 生效", "✓ Connected "+r.j.changed+" models ("+r.j.models+" total). Restart OpenCode to apply.") : osT("已是最新，无需变更","Already up to date"), "ok");
       refresh();
-    }, function(){ b.disabled=false; setMsg("wireMsg","网络错误","err"); });
+    }, function(){ b.disabled=false; setMsg("wireMsg",osT("网络错误","Network error"),"err"); });
   };
   document.getElementById("unwireBtn").onclick=function(){
-    if(!confirm("撤销 opencode 中的 baseURL 注入？")) return;
-    var b=this; b.disabled=true; setMsg("wireMsg","撤销中…");
+    if(!confirm(osT("撤销 opencode 中的 baseURL 注入？", "Restore the previous OpenCode base URL configuration?"))) return;
+    var b=this; b.disabled=true; setMsg("wireMsg",osT("撤销中…","Restoring…"));
     api("POST","/api/unwire",{}).then(function(r){
       b.disabled=false;
-      if(r.status!==200||!r.j.ok){ setMsg("wireMsg",(r.j&&r.j.error)||"失败","err"); return; }
-      setMsg("wireMsg","✓ 已撤销 "+r.j.removed+" 个注入","ok"); refresh();
-    }, function(){ b.disabled=false; setMsg("wireMsg","网络错误","err"); });
+      if(r.status!==200||!r.j.ok){ setMsg("wireMsg",(r.j&&r.j.error)||osT("失败","Failed"),"err"); return; }
+      setMsg("wireMsg",osT("✓ 已撤销 "+r.j.removed+" 个注入","✓ Restored "+r.j.removed+" entries"),"ok"); refresh();
+    }, function(){ b.disabled=false; setMsg("wireMsg",osT("网络错误","Network error"),"err"); });
   };
   document.getElementById("modelsBtn").onclick=function(){
-    var b=this; b.disabled=true; setMsg("modelsMsg","拉取中（逐账号 GET /v1/models）…");
+    var b=this; b.disabled=true; setMsg("modelsMsg",osT("拉取中（逐账号 GET /v1/models）…","Fetching models for each account…"));
     api("POST","/api/models/refresh",{}).then(function(r){
       b.disabled=false;
-      if(r.status!==200||!r.j.ok){ setMsg("modelsMsg",(r.j&&r.j.error)||"失败","err"); return; }
+      if(r.status!==200||!r.j.ok){ setMsg("modelsMsg",(r.j&&r.j.error)||osT("失败","Failed"),"err"); return; }
       var okc=0, errs=[];
       var results=r.j.results||{};
       Object.keys(results).forEach(function(k){ if(results[k].ok) okc++; else errs.push(k+": "+results[k].error); });
-      setMsg("modelsMsg","✓ 完成："+okc+" 个账号成功"+(errs.length?("；失败 "+errs.length+"（"+errs.join("；").slice(0,120)+"）"):""), errs.length?"err":"ok");
+      setMsg("modelsMsg",osT("✓ 完成：","✓ Complete: ")+okc+osT(" 个账号成功"," accounts succeeded")+(errs.length?(osT("；失败 ","; failed ")+errs.length+" ("+errs.join("; ").slice(0,120)+")"):""), errs.length?"err":"ok");
       refresh();
-    }, function(){ b.disabled=false; setMsg("modelsMsg","网络错误","err"); });
+    }, function(){ b.disabled=false; setMsg("modelsMsg",osT("网络错误","Network error"),"err"); });
   };
 }
 // ---- 免费模型编辑器（选用 + 优先级 + 模式） ----
@@ -624,7 +647,7 @@ function renderFreeTable(){
     var m=freeModels().filter(function(x){return x.id===id;})[0]||{id:id,api:"chat"};
     var names=accs.filter(function(a){ var mm=s.models&&s.models[a.id]; return mm&&(mm.ids||[]).indexOf(id)>=0; }).map(function(a){return a.label;});
     var checked=!!freeSelSet[id];
-    var rank=checked? ('<span class="yes">#'+(sel.indexOf(id)+1)+'</span>') : '<span class="muted">未选用</span>';
+    var rank=checked? ('<span class="yes">#'+(sel.indexOf(id)+1)+'</span>') : '<span class="muted">'+osT('未选用','Not selected')+'</span>';
     // Claude Code 对"目录里没有的模型"会提示并按 200k 窗口估算 → 附上开关避免窗口误判
     var snip = 'ANTHROPIC_BASE_URL=http://127.0.0.1:'+((s.ports&&s.ports.proxy)||8788)
       +' ANTHROPIC_AUTH_TOKEN=openselect ANTHROPIC_MODEL='+id
@@ -633,14 +656,14 @@ function renderFreeTable(){
     var zenDeny = (s.zenDeny||{})[id];
     var zenAvail = zenDeny
       ? '<span class="pill bad">已耗尽（'+esc(zenDeny.reason)+'）</span><div class="muted" style="font-size:10px">'+fmtT(zenDeny.until)+' 恢复（'+fmtIn(zenDeny.until)+'）</div>'
-      : '<span class="pill ok">可用</span><div class="muted" style="font-size:10px">不占账号额度</div>';
+      : '<span class="pill ok">'+osT('可用','Available')+'</span><div class="muted" style="font-size:10px">'+osT('不占账号额度','Does not use account quota')+'</div>';
     var epCell = isZen
-      ? '<span class="pill ok">zen 直通</span><div class="mono muted" style="font-size:10px">本地 opencode serve</div>'
-      : esc(m.api==="responses"?"responses 端点":"chat 端点");
+      ? '<span class="pill ok">'+osT('zen 直通','Zen direct')+'</span><div class="mono muted" style="font-size:10px">'+osT('本地 opencode serve','Local OpenCode server')+'</div>'
+      : esc(m.api==="responses"?osT("responses 端点","Responses endpoint"):osT("chat 端点","Chat endpoint"));
     var availCell = isZen ? zenAvail
       : (names.length
           ? '<span title="'+esc(names.join("、"))+'">'+names.slice(0,3).map(function(n){return esc(n);}).join("、")+(names.length>3?' 等 '+names.length+' 个':'')+'</span>'
-          : '<span class="muted">未探测/不可用</span>');
+          : '<span class="muted">'+osT('未探测/不可用','Not checked / unavailable')+'</span>');
     var checkCell = '<input type="checkbox" '+(checked?"checked":"")+' onchange="freeToggle('+q(id)+',this.checked)"'
       +(isZen?' title="勾选后进入免费链：优先模式先于付费模型使用；该模型耗尽时自动换下一个"':'')+'>';
     var rankCell = rank+' <button class="btn sm" onclick="freeMove('+q(id)+',-1)">↑</button> <button class="btn sm" onclick="freeMove('+q(id)+',1)">↓</button>';
@@ -650,13 +673,13 @@ function renderFreeTable(){
       + '<td>'+rankCell+'</td>'
       + '<td>'+availCell+'</td>'
       + '<td>'+(relayed[id]||0)+'</td>'
-      + '<td><button class="btn sm" onclick="copyFree('+q(snip)+')">复制 Claude 命令</button>'
+      + '<td><button class="btn sm" onclick="copyFree('+q(snip)+')">'+osT('复制 Claude 命令','Copy Claude command')+'</button>'
       + '<div class="mono muted" style="font-size:10px;margin-top:3px" title="OpenAI 兼容：base_url=http://127.0.0.1:'+((s.ports&&s.ports.proxy)||8788)+'/v1 · model='+esc(id)+'">OpenAI: /v1 · '+esc(id)+'</div></td></tr>';
   }).join("");
-  tb.innerHTML = rows || '<tr><td colspan="7" class="muted">目录里没有免费模型</td></tr>';
+  tb.innerHTML = rows || '<tr><td colspan="7" class="muted">'+osT('目录里没有免费模型','No free models in the catalog')+'</td></tr>';
   var dirtyTip=document.getElementById("freeDirty");
   if(dirtyTip){
-    dirtyTip.textContent = freeDirty ? "有未保存的修改" : "";
+    dirtyTip.textContent = freeDirty ? osT("有未保存的修改","Unsaved changes") : "";
     dirtyTip.className = freeDirty ? "msg warn" : "msg";
   }
   var saveBtn=document.getElementById("freeSave");
@@ -678,12 +701,13 @@ function renderFreeTable(){
       + '某个 zen 模型额度耗尽会<b>自动换下一个</b>，冷却时间（恢复时刻）直接显示在本行；恢复后自动重新可用。'
       + '<br>硬约束：普通免费模型只在 <b>chat 端点</b>（<code>/v1/chat/completions</code>）上服务；走 <b>responses 端点</b>的客户端（opencode 默认的 gpt-6-luna 等）不会被免费模型承接。'
       + '<br>近 '+(s.requests||[]).length+' 条请求里有 <b>'+(Object.keys(relayed).reduce(function(a,k){return a+relayed[k];},0))+'</b> 条被免费模型承接（可在「最近请求」表看到 请求模型 → 实际服务模型）。';
+    if (osLang === 'en') hint.innerHTML = (mode==='off' ? 'Free-model routing is off; the requested model is used.' : mode==='fallback' ? 'Fallback: selected free models are tried when all eligible paid accounts are unavailable.' : 'Free first: selected free models are tried before the requested paid model.') + '<br>Use the arrows to set priority. Zen models use the local OpenCode server; free-model routing applies only to compatible chat endpoints.';
   }
 }
 function copyFree(text){
-  var done=function(){ setMsg("freeMsg","✓ 已复制到剪贴板","ok"); };
+  var done=function(){ setMsg("freeMsg",osT("✓ 已复制到剪贴板","✓ Copied to clipboard"),"ok"); };
   if(navigator.clipboard&&navigator.clipboard.writeText){
-    navigator.clipboard.writeText(text).then(done, function(){ setMsg("freeMsg","复制失败，请手动选中复制","err"); });
+    navigator.clipboard.writeText(text).then(done, function(){ setMsg("freeMsg",osT("复制失败，请手动选中复制","Copy failed; please copy manually"),"err"); });
   } else {
     var ta=document.createElement("textarea");
     ta.value=text; ta.setAttribute("readonly","");
@@ -692,46 +716,46 @@ function copyFree(text){
     var okCopy=false;
     try{ okCopy = document.execCommand("copy"); }catch(e){ okCopy=false; }
     document.body.removeChild(ta);
-    if(okCopy) done(); else setMsg("freeMsg","复制失败，请手动选中复制","err");
+    if(okCopy) done(); else setMsg("freeMsg",osT("复制失败，请手动选中复制","Copy failed; please copy manually"),"err");
   }
 }
 function freeSave(){
   var mode=(document.getElementById("freeMode")||{}).value||"first";
   api("POST","/api/settings",{freeFirst: freeSelectedOrdered(), freeFirstMode: mode}).then(function(r){
-    if(r.status!==200||!r.j.ok){ setMsg("freeMsg",(r.j&&r.j.error)||"保存失败","err"); return; }
+    if(r.status!==200||!r.j.ok){ setMsg("freeMsg",(r.j&&r.j.error)||osT("保存失败","Save failed"),"err"); return; }
     freeDirty=false;
-    setMsg("freeMsg","✓ 已保存","ok"); refresh();
+    setMsg("freeMsg",osT("✓ 已保存","✓ Saved"),"ok"); refresh();
   });
 }
 function render(s){
-  var __mode = s.config.freeFirstMode==="off"?"关闭":s.config.freeFirstMode==="fallback"?"兜底":"优先";
+  var __mode = s.config.freeFirstMode==="off"?osT("关闭","Off"):s.config.freeFirstMode==="fallback"?osT("兜底","Fallback"):osT("优先","Free first");
   var __chain = (s.config.freeFirst||[]);
   var hdr = document.getElementById("hdr");
-  hdr.textContent = "代理 :" + s.ports.proxy + " · 面板 :" + s.ports.dashboard + " · 阈值 " + (s.config.switchAt*100).toFixed(0) + "% · 轮询 " + s.config.pollSec + "s · 上游 " + s.upstreamBase + " · 目录 " + s.modelCount + " 个模型 · 免费链 " + __chain.length + " 个（" + __mode + "）";
+  hdr.textContent = osT("代理 :","Proxy :") + s.ports.proxy + osT(" · 面板 :"," · Dashboard :") + s.ports.dashboard + osT(" · 阈值 "," · Threshold ") + (s.config.switchAt*100).toFixed(0) + osT("% · 轮询 ","% · Polling ") + s.config.pollSec + osT("s · 上游 ","s · Upstream ") + s.upstreamBase + osT(" · 目录 "," · Models ") + s.modelCount + osT(" 个模型 · 免费链 "," · Free chain ") + __chain.length + " (" + __mode + ")";
   hdr.title = __chain.join(", ");
   var accounts=(s.accounts||[]).filter(isPoolAcct);
   var enabled=accounts.filter(function(a){return a.enabled;}).length;
   var goCount=accounts.filter(function(a){return a.integration==="opencode-go";}).length;
   document.getElementById("dashAccounts").textContent=enabled+" / "+accounts.length;
   document.getElementById("dashAccountPill").textContent=goCount+" OpenCode";
-  document.getElementById("dashAccountsSub").textContent="启用 / 全部 · 直连 "+accounts.filter(function(a){return a.integration!=="opencode-go" && a.enabled;}).length+" 个";
+  document.getElementById("dashAccountsSub").textContent=osT("启用 / 全部 · 直连 ","Enabled / total · Direct ")+accounts.filter(function(a){return a.integration!=="opencode-go" && a.enabled;}).length;
   var rq=s.activity&&s.activity.requests24h?s.activity.requests24h:{requests:0,ok:0,errors:0};
   document.getElementById("dashRequests").textContent=num(rq.requests||0);
   document.getElementById("dashReqPill").textContent="24h";
-  document.getElementById("dashRequestsSub").textContent="成功率 "+pct(rq.requests?rq.ok/rq.requests:null)+" · 失败 "+num(rq.errors||0);
+  document.getElementById("dashRequestsSub").textContent=osT("成功率 ","Success rate ")+pct(rq.requests?rq.ok/rq.requests:null)+osT(" · 失败 "," · Failed ")+num(rq.errors||0);
   var sw=s.activity&&s.activity.switches24h?s.activity.switches24h:{failovers:0,rebinds:0};
   document.getElementById("dashSwitches").textContent=num(sw.failovers||0);
-  document.getElementById("dashSwitchPill").textContent="故障切换";
-  document.getElementById("dashSwitchesSub").textContent="会话重绑 "+num(sw.rebinds||0)+" · 原因 "+(sw.reasons||[]).length+" 类";
+  document.getElementById("dashSwitchPill").textContent=osT("故障切换","Failovers");
+  document.getElementById("dashSwitchesSub").textContent=osT("会话重绑 ","Session rebindings ")+num(sw.rebinds||0)+osT(" · 原因 "," · Reason types ")+(sw.reasons||[]).length;
   document.getElementById("dashModels").textContent=num(s.modelCount||0);
-  document.getElementById("dashModelPill").textContent="免费 "+__chain.length;
-  document.getElementById("dashModelsSub").textContent="免费链 "+__chain.length+" 个（"+__mode+"）";
+  document.getElementById("dashModelPill").textContent=osT("免费 ","Free ")+__chain.length;
+  document.getElementById("dashModelsSub").textContent=osT("免费链 ","Free chain ")+__chain.length+" ("+__mode+")";
   buildTypes(s);
   var wp=document.getElementById("wirePill");
   if(s.wire){
-    wp.textContent = s.wire.wired ? ("已接入 "+s.wire.written+"/"+s.wire.total) : "未接入";
+    wp.textContent = s.wire.wired ? (osT("已接入 ","Connected ")+s.wire.written+"/"+s.wire.total) : osT("未接入","Not connected");
     wp.className = "pill " + (s.wire.wired?"ok":"dim");
-    document.getElementById("wireInfo").innerHTML = "目标 <code>"+esc(s.wire.baseURL)+"</code> · 配置 <span class='mono'>"+esc(s.wire.path)+"</span>"+(s.wire.configExists?"":" · <span style='color:#d29922'>配置文件不存在</span>");
+    document.getElementById("wireInfo").innerHTML = osT("目标 ","Target ")+"<code>"+esc(s.wire.baseURL)+"</code>"+osT(" · 配置 "," · Configuration ")+"<span class='mono'>"+esc(s.wire.path)+"</span>"+(s.wire.configExists?"":" · <span style='color:#d29922'>"+osT("配置文件不存在","Configuration file not found")+"</span>");
     document.getElementById("wireBase").textContent = s.wire.baseURL;
   }
   // 实测流量：opencode 接入是否真的进池
@@ -739,9 +763,9 @@ function render(s){
   var wt=document.getElementById("wireTraffic");
   if(wt){
     if(ocClient && ocClient.requests>0){
-      wt.innerHTML = '实测流量：opencode 近 500 条请求里 <b>'+ocClient.requests+'</b> 条进池（最近一条由 <b>'+esc(ocClient.lastAccountLabel||"未知账号")+'</b> 服务，'+ago(ocClient.lastAt)+'）';
+      wt.innerHTML = osT('实测流量：opencode 近 500 条请求里 <b>','Observed traffic: <b>')+ocClient.requests+osT('</b> 条进池（最近一条由 <b>','</b> OpenCode requests in the last 500 entered the pool (most recent account: <b>')+esc(ocClient.lastAccountLabel||osT("未知账号","Unknown account"))+'</b>, '+ago(ocClient.lastAt)+')';
     } else {
-      wt.innerHTML = '实测流量：<span class="muted">还没观察到 opencode 的请求进池（注入后需重启 opencode 生效）</span>';
+      wt.innerHTML = osT('实测流量：<span class="muted">还没观察到 opencode 的请求进池（注入后需重启 opencode 生效）</span>','Observed traffic: <span class="muted">No OpenCode requests observed yet (restart OpenCode after connecting).</span>');
     }
   }
   var ssw=document.getElementById("setSwitch");
@@ -755,51 +779,51 @@ function render(s){
   var showAll = document.getElementById("showAllAccounts").checked;
   var allAccs = (s.accounts || []).filter(isPoolAcct);
   var visibleAccs = showAll ? allAccs : allAccs.filter(accountUsable);
-  document.getElementById("accCount").textContent = "显示 "+visibleAccs.length+" / "+allAccs.length+" 个账号"
-    +(showAll ? "" : "（已隐藏 "+(allAccs.length-visibleAccs.length)+" 个已耗尽/冷却/仅凭据）");
+  document.getElementById("accCount").textContent = osT("显示 ","Showing ")+visibleAccs.length+" / "+allAccs.length+osT(" 个账号"," accounts")
+    +(showAll ? "" : osT("（已隐藏 "+(allAccs.length-visibleAccs.length)+" 个已耗尽/冷却/仅凭据）", " (hidden: "+(allAccs.length-visibleAccs.length)+" exhausted, cooling down or credentials-only)"));
   var acc = document.getElementById("accounts");
   acc.innerHTML = visibleAccs.map(function(a){
     var u = a.usage || {};
-    var cd = a.cooldownLeftMs > 0 ? '<span class="muted"> · 冷却剩 '+dur(a.cooldownLeftMs)+'</span>' : "";
-    var mc = (s.models && s.models[a.id]) ? ' · 可用模型 '+s.models[a.id].ids.length+' 个' : '';
+    var cd = a.cooldownLeftMs > 0 ? '<span class="muted">'+osT(' · 冷却剩 ',' · Cooldown ')+dur(a.cooldownLeftMs)+'</span>' : "";
+    var mc = (s.models && s.models[a.id]) ? osT(' · 可用模型 ',' · Available models ')+s.models[a.id].ids.length : '';
     var isPool = a.integration==="opencode-go" || a.integration==="zai" || a.integration==="minimax" || a.integration==="deepseek-api" || a.integration==="commandcode" || a.integration==="ollama";
-    var fallbackPill = a.fallbackOnly ? ' <span class="pill warn" style="font-size:10px">兜底</span>' : '';
-    var bal = u.balance ? '<div class="more" style="color:#58a6ff">余额 '+esc(u.balance.currency)+' '+Number(u.balance.total).toFixed(2)+(u.balance.available?'':' · 不可用')+'</div>' : '';
+    var fallbackPill = a.fallbackOnly ? ' <span class="pill warn" style="font-size:10px">'+osT('兜底','Fallback')+'</span>' : '';
+    var bal = u.balance ? '<div class="more" style="color:#58a6ff">'+osT('余额 ','Balance ')+esc(u.balance.currency)+' '+Number(u.balance.total).toFixed(2)+(u.balance.available?'':osT(' · 不可用',' · Unavailable'))+'</div>' : '';
     var actions = '<div class="btnrow">'
       + (isPool && planOptionsFor(a.integration).length
           ? '<select class="input" style="width:auto;max-width:150px" onchange="setPlan('+q(a.id)+',this.value)">'+planOptionsHtml(a.integration,a.plan)+'</select>'
-          : isPool ? '' : '<span class="pill dim">仅凭据</span>')
-      + (isPool && !a.fallbackOnly ? '<button class="btn sm" onclick="forceAcct('+q(a.id)+')">'+(s.current&&s.current.forcedAccountId===a.id?'取消首选':'设为首选')+'</button>' : '')
-      + (a.cooldownLeftMs > 0 ? '<button class="btn sm" onclick="clearCooldown('+q(a.id)+')">清除冷却</button>' : '')
-      + '<button class="btn sm danger" onclick="delAcct('+q(a.id)+')">删除</button></div>';
+          : isPool ? '' : '<span class="pill dim">'+osT('仅凭据','Credentials only')+'</span>')
+      + (isPool && !a.fallbackOnly ? '<button class="btn sm" onclick="forceAcct('+q(a.id)+')">'+(s.current&&s.current.forcedAccountId===a.id?osT('取消首选','Clear preference'):osT('设为首选','Prefer'))+'</button>' : '')
+      + (a.cooldownLeftMs > 0 ? '<button class="btn sm" onclick="clearCooldown('+q(a.id)+')">'+osT('清除冷却','Clear cooldown')+'</button>' : '')
+      + '<button class="btn sm danger" onclick="delAcct('+q(a.id)+')">'+osT('删除','Delete')+'</button></div>';
     return '<div class="card acc">'
-      + '<div class="top"><div style="min-width:0"><div class="name" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="'+esc(a.label)+'">'+esc(a.label)+(s.preferredAccountId===a.id?' <span class="pill ok" style="font-size:10px">首选</span>':'')+fallbackPill+'</div>'
+      + '<div class="top"><div style="min-width:0"><div class="name" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="'+esc(a.label)+'">'+esc(a.label)+(s.preferredAccountId===a.id?' <span class="pill ok" style="font-size:10px">'+osT('首选','Preferred')+'</span>':'')+fallbackPill+'</div>'
       + '<div class="key" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="'+esc(a.keyMasked+' · '+a.integration)+'">'+esc(a.keyMasked)+' · '+esc(a.integration)+'</div></div>'
-      + '<span class="pill '+pillClass(a)+'">'+esc(a.status)+'</span></div>'
-      + '<div class="usages">'+winMini("5小时", u.rolling)+winMini("周", u.weekly)+winMini("月", u.monthly)+'</div>'
+      + '<span class="pill '+pillClass(a)+'">'+esc(osLang==='en'?({'正常':'Healthy','Key 无效':'Invalid key','冷却中':'Cooling down','已限流':'Rate limited','接近阈值':'Near threshold','已禁用':'Disabled','仅凭据':'Credentials only'}[a.status]||a.status):a.status)+'</span></div>'
+      + '<div class="usages">'+winMini(osT("5小时","5h"), u.rolling)+winMini(osT("周","Week"), u.weekly)+winMini(osT("月","Month"), u.monthly)+'</div>'
       + bal
-      + '<details class="curve"><summary>用量曲线</summary>'+spark(a.history, s.config.switchAt)+'</details>'
-      + '<div class="more" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">压力 '+pct(a.pressure)+' · 最近使用 '+ago(a.lastUsed)+cd+mc+(a.usage?' · 采集于 '+ago(a.usage.ts):'')+'</div>'
+      + '<details class="curve"><summary>'+osT('用量曲线','Usage history')+'</summary>'+spark(a.history, s.config.switchAt)+'</details>'
+      + '<div class="more" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+osT('压力 ','Pressure ')+pct(a.pressure)+osT(' · 最近使用 ',' · Last used ')+ago(a.lastUsed)+cd+mc+(a.usage?osT(' · 采集于 ',' · Updated ')+ago(a.usage.ts):'')+'</div>'
       + (a.lastError?'<div class="more" style="color:#d29922;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="'+esc(a.lastError)+'">'+esc(a.lastError).slice(0,80)+'</div>':'')
       + actions
       + '</div>';
-  }).join("") || '<div class="muted">没有可用账号 — 勾选「显示全部账号」查看已耗尽/冷却/仅凭据账号</div>';
+  }).join("") || '<div class="muted">'+osT('没有可用账号 — 勾选「显示全部账号」查看已耗尽/冷却/仅凭据账号','No available accounts — select Show all accounts to view exhausted, cooling down, and credentials-only accounts')+'</div>';
   var act=s.activity||{};
   var rq=act.requests24h||{requests:0,ok:0,errors:0,avgLatencyMs:0};
   var sw=act.switches24h||{total:0,failovers:0,rebinds:0,reasons:[]};
   var okRate=rq.requests? rq.ok/rq.requests : 0;
-  var topReasons=(sw.reasons||[]).filter(function(x){return String(x.reason).indexOf("policy:")!==0;}).slice(0,3).map(function(x){return esc(x.reason)+' '+x.count;}).join(' · ') || '无';
+  var topReasons=(sw.reasons||[]).filter(function(x){return String(x.reason).indexOf("policy:")!==0;}).slice(0,3).map(function(x){return esc(x.reason)+' '+x.count;}).join(' · ') || osT('无','None');
   document.getElementById("requestSummary").innerHTML =
-    '<div class="fr"><label>最近 24h</label><b>'+rq.requests+'</b><span class="muted"> 请求 · 成功率 '+pct(okRate)+' · 平均 '+dur(rq.avgLatencyMs)+' · 失败 '+rq.errors+'</span></div>'
-    + '<div class="more"><a href="/requests" target="_blank">查看完整请求流水 →</a></div>';
+    '<div class="fr"><label>'+osT('最近 24h','Last 24h')+'</label><b>'+rq.requests+'</b><span class="muted">'+osT(' 请求 · 成功率 ',' requests · Success ')+pct(okRate)+osT(' · 平均 ',' · Average ')+dur(rq.avgLatencyMs)+osT(' · 失败 ',' · Failed ')+rq.errors+'</span></div>'
+    + '<div class="more"><a href="/requests" target="_blank">'+osT('查看完整请求流水 →','View request history →')+'</a></div>';
   document.getElementById("switchSummary").innerHTML =
-    '<div class="fr"><label>最近 24h</label><b>'+sw.failovers+'</b><span class="muted"> 次故障切换 · 会话重绑 '+sw.rebinds+' 次 · 主要原因：'+topReasons+'</span></div>'
-    + '<div class="more"><a href="/switches" target="_blank">查看完整切换记录 →</a></div>';
+    '<div class="fr"><label>'+osT('最近 24h','Last 24h')+'</label><b>'+sw.failovers+'</b><span class="muted">'+osT(' 次故障切换 · 会话重绑 ',' failovers · Session rebindings ')+sw.rebinds+osT(' 次 · 主要原因：',' · Top reasons: ')+topReasons+'</span></div>'
+    + '<div class="more"><a href="/switches" target="_blank">'+osT('查看完整切换记录 →','View switch history →')+'</a></div>';
   // 接入（客户端）→ 账号
   var clientRows=(s.clients||[]);
   var enabledAccs=(s.accounts||[]).filter(function(a){return a.enabled;});
   document.getElementById("clients").innerHTML = clientRows.map(function(c){
-    var opts='<option value="">未指定（按自然策略）</option>';
+    var opts='<option value="">'+osT('未指定（按自然策略）','Not assigned (automatic)')+'</option>';
     var pinnedFound=false;
     enabledAccs.forEach(function(a){
       var isSel = (a.id===c.pinnedAccountId) ? " selected" : "";
@@ -807,39 +831,44 @@ function render(s){
       opts += '<option value="'+esc(a.id)+'"'+isSel+'>'+esc(a.label)+'</option>';
     });
     if(c.pinnedAccountId && !pinnedFound){
-      var why = (c.pinState==="disabled") ? "（账号已停用）" : "（账号已不存在）";
+      var why = (c.pinState==="disabled") ? osT("（账号已停用）"," (account disabled)") : osT("（账号已不存在）"," (account no longer exists)");
       opts += '<option value="'+esc(c.pinnedAccountId)+'" selected>'+esc(c.pinnedAccountId)+why+'</option>';
     }
     var sel='<select class="input" style="width:auto;min-width:160px" onchange="pinClient('+q(c.kind)+',this.value)">'+opts+'</select>';
-    return '<tr><td>'+esc(c.label)+'</td><td>'+(c.requests||0)+'</td><td>'+esc(c.lastAccountLabel||"暂无")+(c.lastAt?' <span class="muted">· '+ago(c.lastAt)+'</span>':'')+'</td><td>'+sel+'</td></tr>';
-  }).join("") || '<tr><td colspan="4" class="muted">暂无接入流量</td></tr>';
+    var clientEnglish={'opencode':'OpenCode','claude-code':'Claude Code','anthropic-compat':'Anthropic-compatible client','openai-responses':'OpenAI Responses client','openai-compat':'OpenAI Chat client','other':'Other client'};
+    return '<tr><td>'+esc(osLang==='en'?(clientEnglish[c.kind]||c.label):c.label)+'</td><td>'+(c.requests||0)+'</td><td>'+esc(c.lastAccountLabel||osT("暂无","None"))+(c.lastAt?' <span class="muted">· '+ago(c.lastAt)+'</span>':'')+'</td><td>'+sel+'</td></tr>';
+  }).join("") || '<tr><td colspan="4" class="muted">'+osT('暂无接入流量','No client traffic')+'</td></tr>';
   var cur=s.current||{forcedAccountId:null,lastAccountId:null,sessionCount:0,sessions:[]};
   var accById={}; (s.accounts||[]).forEach(function(a){ accById[a.id]=a; });
   var sessHtml=(cur.sessions||[]).slice(0,6).map(function(x){
     return '<span class="mono" style="margin-right:8px">'+esc((x.sessionId||"").slice(-8))+'→'+esc(accById[x.accountId]?accById[x.accountId].label:x.accountId)+'</span>';
-  }).join("") || '<span class="muted">暂无活跃会话</span>';
+  }).join("") || '<span class="muted">'+osT('暂无活跃会话','No active sessions')+'</span>';
   document.getElementById("currentCard").innerHTML =
-      '<div class="fr"><label>正在服务</label><b>'+esc(cur.lastAccountId?(accById[cur.lastAccountId]?accById[cur.lastAccountId].label:cur.lastAccountId):'暂无')+'</b><span class="muted"> · 最近一次请求选中的账号</span></div>'
-    + '<div class="fr"><label>手动指定</label><b>'+esc(cur.forcedAccountId?(accById[cur.forcedAccountId]?accById[cur.forcedAccountId].label:cur.forcedAccountId):'未设置（按自然策略）')+'</b>'+(cur.forcedAccountId?' <button class="btn sm" onclick="forceAcct(null)">解除</button>':'')+'</div>'
-    + '<div class="fr"><label>活跃会话</label><b>'+cur.sessionCount+'</b><span class="muted"> 个</span><div style="margin-top:4px">'+sessHtml+'</div></div>'
-    + '<div class="more">手动指定后：新流量优先走该账号，已有会话会立即重绑过去；该账号被停用或 Key 失效时自动回退到自然策略。</div>';
+      '<div class="fr"><label>'+osT('正在服务','Serving')+'</label><b>'+esc(cur.lastAccountId?(accById[cur.lastAccountId]?accById[cur.lastAccountId].label:cur.lastAccountId):osT('暂无','None'))+'</b><span class="muted">'+osT(' · 最近一次请求选中的账号',' · Account selected for the latest request')+'</span></div>'
+    + '<div class="fr"><label>'+osT('手动指定','Manual preference')+'</label><b>'+esc(cur.forcedAccountId?(accById[cur.forcedAccountId]?accById[cur.forcedAccountId].label:cur.forcedAccountId):osT('未设置（按自然策略）','Not set (automatic)'))+'</b>'+(cur.forcedAccountId?' <button class="btn sm" onclick="forceAcct(null)">'+osT('解除','Clear')+'</button>':'')+'</div>'
+    + '<div class="fr"><label>'+osT('活跃会话','Active sessions')+'</label><b>'+cur.sessionCount+'</b><div style="margin-top:4px">'+sessHtml+'</div></div>'
+    + '<div class="more">'+osT('手动指定后：新流量优先走该账号，已有会话会立即重绑过去；该账号被停用或 Key 失效时自动回退到自然策略。','New traffic prefers the selected account and existing sessions rebind immediately. Disabled or invalid accounts fall back to automatic selection.')+'</div>';
   // 免费模型：勾选哪些进入中转 + 优先级顺序 + 模式
   freeInitState(s);
   renderFreeTable();
   var fm=document.getElementById("freeMeta");
-  if(fm) fm.textContent = freeModels().length ? ("目录内 "+freeModels().length+" 个 · 已选 "+freeSelectedOrdered().length+" 个") : "";
+  if(fm) fm.textContent = freeModels().length ? (osT("目录内 ","In catalog ")+freeModels().length+osT(" 个 · 已选 "," · Selected ")+freeSelectedOrdered().length) : "";
   var bk=s.backups||{list:[],keyFingerprint:null,hasKey:false,remote:null};
   var remoteLine = bk.remote
     ? '<br>异地备份远端 <code>'+esc(bk.remote)+'</code> <span class="muted">（每日 03:30 定时任务自动推送；推送/拉取在 CLI：<code>opensel backup --push/--fetch</code>）</span>'
       + '<br><span style="color:#d29922">⚠ 定时备份推送的是<b>明文归档（含账号 Key）</b>：远端必须是私有仓库；定时任务暂不支持加密（需要加密请手动 <code>opensel backup --push &lt;remote&gt; --encrypt</code>）</span>'
     : '<br><span class="muted">未配置异地备份远端（<code>opensel backup --remote &lt;url&gt;</code> 设置；推送/拉取在 CLI）</span>';
+  if (osLang === 'en') remoteLine = bk.remote
+    ? '<br>Remote backup <code>'+esc(bk.remote)+'</code> <span class="muted">(scheduled push daily at 03:30; use <code>opensel backup --push/--fetch</code> for manual push/pull)</span>'
+      + '<br><span style="color:#d29922">⚠ Scheduled backups push <b>plaintext archives containing account keys</b>. The remote must be private. Scheduled encryption is not supported; use <code>opensel backup --push &lt;remote&gt; --encrypt</code> manually for encryption.</span>'
+    : '<br><span class="muted">No remote backup configured. Set one with <code>opensel backup --remote &lt;url&gt;</code>; push/pull through the CLI.</span>';
   document.getElementById("backupInfo").innerHTML = (bk.hasKey
-    ? ("信任锚已配置（指纹 <b>"+esc(bk.keyFingerprint||"-")+"</b>）· 备份目录 "+esc(BACKUP_DIR_TEXT)+" · 签名备份可被远端验签")
-    : ("未配置信任锚（<code>opensel keygen</code>）· 仅完整性校验，无法证明来源 · 备份目录 "+esc(BACKUP_DIR_TEXT))) + remoteLine;
+    ? (osT("信任锚已配置（指纹 <b>","Trust anchor configured (fingerprint <b>")+esc(bk.keyFingerprint||"-")+osT("</b>）· 备份目录 ","</b>) · Backup directory ")+esc(BACKUP_DIR_TEXT)+osT(" · 签名备份可被远端验签"," · Signed backups can be verified remotely"))
+    : (osT("未配置信任锚（<code>opensel keygen</code>）· 仅完整性校验，无法证明来源 · 备份目录 ","No trust anchor (<code>opensel keygen</code>); integrity checks alone do not prove origin · Backup directory ")+esc(BACKUP_DIR_TEXT))) + remoteLine;
   document.getElementById("backups").innerHTML = (bk.list||[]).map(function(b){
-    var sig = b.signed ? (b.verified===true ? '<span class="yes">已验签</span>' : (b.verified===false ? '<span class="no">验签失败</span>' : '<span class="muted">未验签</span>')) : '<span class="muted">无签名</span>';
-    return '<tr><td class="mono">'+esc(b.name)+(b.safety?' <span class="muted">[安全备份]</span>':'')+'</td><td class="mono">'+esc(b.createdAt||"-")+'</td><td>'+(b.bytes/1024).toFixed(1)+'KB</td><td>'+b.files+'</td><td>'+(b.signed?'<span class="yes">有</span>':'<span class="muted">无</span>')+'</td><td>'+sig+'</td></tr>';
-  }).join("") || '<tr><td colspan="6" class="muted">暂无备份</td></tr>';
+    var sig = b.signed ? (b.verified===true ? '<span class="yes">'+osT('已验签','Verified')+'</span>' : (b.verified===false ? '<span class="no">'+osT('验签失败','Verification failed')+'</span>' : '<span class="muted">'+osT('未验签','Not verified')+'</span>')) : '<span class="muted">'+osT('无签名','Unsigned')+'</span>';
+    return '<tr><td class="mono">'+esc(b.name)+(b.safety?' <span class="muted">'+osT('[安全备份]','[safety backup]')+'</span>':'')+'</td><td class="mono">'+esc(b.createdAt||"-")+'</td><td>'+(b.bytes/1024).toFixed(1)+'KB</td><td>'+b.files+'</td><td>'+(b.signed?'<span class="yes">'+osT('有','Yes')+'</span>':'<span class="muted">'+osT('无','No')+'</span>')+'</td><td>'+sig+'</td></tr>';
+  }).join("") || '<tr><td colspan="6" class="muted">'+osT('暂无备份','No backups')+'</td></tr>';
   var tzh=document.getElementById("tzHint");
   if(tzh){
     var ex="";
@@ -847,16 +876,16 @@ function render(s){
       var accts=s.accounts||[];
       var wz=null;
       for(var i=0;i<accts.length;i++){ var u=accts[i].usage; if(u&&u.weekly&&u.weekly.resetsAt){ wz=u.weekly.resetsAt; break; } }
-      if(wz){ ex=" 例如 weekly 上游边界 "+String(wz).replace(/\\.\\d+Z$/,"Z")+" = 本机 "+fmtReset(wz)+"（"+fmtIn(wz)+"）。"; }
+      if(wz){ ex=osT(" 例如 weekly 上游边界 "," Example: weekly boundary ")+String(wz).replace(/\\.\\d+Z$/,"Z")+osT(" = 本机 "," = local ")+fmtReset(wz)+" ("+fmtIn(wz)+")."; }
     }catch(e){}
-    tzh.textContent="重置时间按本机时区显示（当前 "+tzLabel()+"）；上游给的是 UTC 绝对时刻，本页已按本机时区换算。"+ex;
+    tzh.textContent=osT("重置时间按本机时区显示（当前 "+tzLabel()+"）；上游给的是 UTC 绝对时刻，本页已按本机时区换算。","Reset times use your local time zone ("+tzLabel()+"); upstream UTC timestamps are converted locally.")+ex;
   }
   document.getElementById("alerts").innerHTML = (s.alerts||[]).map(function(a){
     return '<tr><td class="mono">'+fmtT(a.ts)+'</td><td>'+esc(a.accountId)+'</td><td>'+esc(a.window)+'</td><td>'+pct(a.threshold)+'</td><td>'+pct(a.percent)+'</td></tr>';
-  }).join("") || '<tr><td colspan="5" class="muted">暂无告警</td></tr>';
+  }).join("") || '<tr><td colspan="5" class="muted">'+osT('暂无告警','No alerts')+'</td></tr>';
   renderModels(s);
   renderCredentials(s);
-  document.getElementById("foot").textContent = "刷新于 " + fmtT(s.now) + " · 每 10 秒自动刷新";
+  document.getElementById("foot").textContent = osT("刷新于 ","Updated ") + fmtT(s.now) + osT(" · 每 10 秒自动刷新"," · Refreshes every 10 seconds");
 }
 var routeRefreshing = false;
 function refreshBestRoute(){
@@ -865,8 +894,13 @@ function refreshBestRoute(){
   fetch("/api/routes").then(function(r){ return r.json(); }).then(function(d){
     var el=document.getElementById("bestRouteCard"); if(!el) return;
     var b=d.best;
-    if(!b){ el.innerHTML='<div class="more">无可用线路；检查账号启用/冷却/额度，或去 <a href="/routes">线路优化 →</a></div>'; return; }
-    el.innerHTML='<div class="top"><div><div class="name">'+esc(b.providerName)+(b.kind==="plan"?" · "+esc(b.name):"")+'</div><div class="more">'+esc(b.reason)+' · 账号 '+esc(b.accountLabel||"—")+' · 压力 '+pct(b.pressure)+' · 质量 '+pct(b.quality)+' · 延迟 '+(b.latencyMs==null?"无样本":Math.round(b.latencyMs)+"ms")+' · 可靠 '+(b.reliability==null?"无样本":pct(b.reliability))+'</div></div><div class="big" style="font-size:24px;margin:0">'+usd(b.costPerM)+'<span class="muted" style="font-size:12px;font-weight:400"> /M</span></div></div><div class="more">当前 '+esc(b.window)+' · 下一次切换 '+esc(b.nextChange)+' · <a href="/routes">查看线路优化 →</a></div>';
+    if(!b){ el.innerHTML='<div class="more">'+osT('无可用线路；检查账号启用/冷却/额度，或去 ','No route available; check account status, cooldown and quota, or open ')+'<a href="/routes">'+osT('线路优化 →','Route optimization →')+'</a></div>'; return; }
+    var windowEn={'高峰':'Peak','非高峰':'Off-peak','无分时':'No time window','无分时切换':'No scheduled change'};
+    var reasonText=b.reason;
+    if(osLang==='en' && b.kind==='plan') {
+      reasonText=reasonText.replace('套餐额度；当前非高峰，credits ','Plan allowance; off-peak credits ').replace('套餐额度；当前高峰，模型单价 翻倍','Plan allowance; peak model price doubled').replace('套餐额度；当前非高峰，模型单价 标准','Plan allowance; off-peak standard model price').replace('套餐额度；当前高峰','Plan allowance; peak').replace('套餐额度；当前非高峰','Plan allowance; off-peak').replace('套餐额度；无分时折扣','Plan allowance; no time discount');
+    }
+    el.innerHTML='<div class="top"><div><div class="name">'+esc(b.providerName)+(b.kind==="plan"?" · "+esc(b.name):"")+'</div><div class="more">'+esc(reasonText)+osT(' · 账号 ',' · Account ')+esc(b.accountLabel||"—")+osT(' · 压力 ',' · Pressure ')+pct(b.pressure)+osT(' · 质量 ',' · Quality ')+pct(b.quality)+osT(' · 延迟 ',' · Latency ')+(b.latencyMs==null?osT("无样本","No samples"):Math.round(b.latencyMs)+"ms")+osT(' · 可靠 ',' · Reliability ')+(b.reliability==null?osT("无样本","No samples"):pct(b.reliability))+'</div></div><div class="big" style="font-size:24px;margin:0">'+usd(b.costPerM)+'<span class="muted" style="font-size:12px;font-weight:400"> /M</span></div></div><div class="more">'+osT('当前 ','Current ')+esc(osLang==='en'?(windowEn[b.window]||b.window):b.window)+osT(' · 下一次切换 ',' · Next change ')+esc(osLang==='en'?(windowEn[b.nextChange]||b.nextChange):b.nextChange)+' · <a href="/routes">'+osT('查看线路优化 →','View route optimization →')+'</a></div>';
   }).catch(function(){}).finally(function(){ routeRefreshing = false; });
 }
 var refreshing = false;

@@ -1,3 +1,4 @@
+import { PAGE_LOCALE } from "./page_locale";
 import { tokenStatsByProvider } from "./db";
 import { accountPressure, isRateLimited } from "./policy";
 import type { Runtime } from "./state";
@@ -518,61 +519,75 @@ function num(n){ return (n==null||isNaN(n))?"0":Number(n).toLocaleString("zh-CN"
 function pct(n){ return n==null||!isFinite(n)?"—":(n*100).toFixed(1)+"%"; }
 function fmtT(ts){ if(!ts) return "—"; return new Date(ts).toLocaleString("zh-CN",{hour12:false,month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"}); }
 function windowLabel(w){ return w==="peak"?"高峰":w==="off-peak"?"非高峰":"无分时"; }
+function routeText(value){
+  if(osLang!=="en" || value==null) return value;
+  var text=String(value);
+  var labels={"高峰":"Peak","非高峰":"Off-peak","无分时":"No time window","无分时切换":"No scheduled change","当前高峰":"Currently peak","无分时价格":"No time-based pricing","套餐额度；无分时折扣":"Plan credit; no off-peak discount"};
+  if(labels[text]) return labels[text];
+  return text.replace(/^当前非高峰，按 ([0-9]+)% 价格$/, "Currently off-peak; price $1%")
+    .replace(/^套餐额度；当前非高峰，credits ([0-9]+)%$/, "Plan credit; off-peak credits $1%")
+    .replace(/^套餐额度；当前(高峰|非高峰)，模型单价 (翻倍|标准)$/, function(_,w,p){return "Plan credit; "+(w==="高峰"?"peak":"off-peak")+"; model price "+(p==="翻倍"?"doubled":"standard");})
+    .replace(/^套餐额度；当前(高峰|非高峰)$/,function(_,w){return "Plan credit; "+(w==="高峰"?"peak":"off-peak");});
+}
+function providerName(id, name){
+  return id==="deepseek" && name==="DeepSeek 官方" ? osT("DeepSeek 官方","DeepSeek official") : name;
+}
 function render(d){
-  document.getElementById("hdr").textContent="当前 "+fmtT(d.now)+" · 本机时区 "+d.timezone+" · 基准 "+usd(d.base.usdPerMillion)+"/M";
+  document.getElementById("hdr").textContent=osT("当前 ","Now ")+fmtT(d.now)+osT(" · 本机时区 "," · Local time zone ")+d.timezone+osT(" · 基准 "," · Baseline ")+usd(d.base.usdPerMillion)+"/M";
   var b=d.best;
   if(b){
-    document.getElementById("bestName").textContent=b.providerName+(b.kind==="plan"?" · "+b.name:"");
-    document.getElementById("bestPill").textContent=b.kind==="plan"?"套餐":"API";
-    document.getElementById("bestSub").textContent=b.window+" · "+(b.accountLabel||"无账号")+" · 压力 "+pct(b.pressure)+" · 质量 "+pct(b.quality)+" · 延迟 "+(b.latencyMs==null?"无样本":Math.round(b.latencyMs)+"ms")+" · 可靠 "+(b.reliability==null?"无样本":pct(b.reliability)+"（"+num(b.samples)+"）");
+    document.getElementById("bestName").textContent=providerName(b.provider,b.providerName)+(b.kind==="plan"?" · "+b.name:"");
+    document.getElementById("bestPill").textContent=b.kind==="plan"?osT("套餐","Plan"):"API";
+    document.getElementById("bestSub").textContent=routeText(b.window)+" · "+(b.accountLabel||osT("无账号","No account"))+osT(" · 压力 "," · Pressure ")+pct(b.pressure)+osT(" · 质量 "," · Quality ")+pct(b.quality)+osT(" · 延迟 "," · Latency ")+(b.latencyMs==null?osT("无样本","No samples"):Math.round(b.latencyMs)+"ms")+osT(" · 可靠 "," · Reliability ")+(b.reliability==null?osT("无样本","No samples"):pct(b.reliability)+" ("+num(b.samples)+")");
     document.getElementById("bestCost").textContent=usd(b.costPerM);
-    document.getElementById("bestReason").textContent=b.reason;
+    document.getElementById("bestReason").textContent=routeText(b.reason);
   } else {
-    document.getElementById("bestName").textContent="无可用线路";
+    document.getElementById("bestName").textContent=osT("无可用线路","No available route");
     document.getElementById("bestPill").textContent="—";
-    document.getElementById("bestSub").textContent="检查账号启用/冷却/额度";
+    document.getElementById("bestSub").textContent=osT("检查账号启用/冷却/额度","Check account status, cooldown, and quota");
     document.getElementById("bestCost").textContent="—";
     document.getElementById("bestReason").textContent="—";
   }
-  document.getElementById("windowName").textContent=b?b.window:"—";
-  document.getElementById("windowPill").textContent="当前线路";
-  document.getElementById("nextChange").textContent=(d.providers||[]).filter(function(p){return p.nextChange && p.nextChange!=="无分时切换";}).slice(0,2).map(function(p){return p.name+" "+p.nextChange;}).join(" · ")||"无分时切换";
-  document.getElementById("collectCount").textContent=(d.lastErrors&&d.lastErrors.length)?"有错误":"正常";
-  document.getElementById("collectPill").textContent=d.lastRun?"已采集":"未运行";
-  document.getElementById("collectSub").textContent="最近 "+(d.lastRun?fmtT(d.lastRun):"未运行")+" · 官方核验 "+d.lastVerified+" · 错误 "+(d.lastErrors||[]).length;
+  document.getElementById("windowName").textContent=b?routeText(b.window):"—";
+  document.getElementById("windowPill").textContent=osT("当前线路","Current route");
+  document.getElementById("nextChange").textContent=(d.providers||[]).filter(function(p){return p.nextChange && p.nextChange!=="无分时切换";}).slice(0,2).map(function(p){return providerName(p.id,p.name)+" "+routeText(p.nextChange);}).join(" · ")||osT("无分时切换","No scheduled change");
+  document.getElementById("collectCount").textContent=(d.lastErrors&&d.lastErrors.length)?osT("有错误","Errors"):osT("正常","Healthy");
+  document.getElementById("collectPill").textContent=d.lastRun?osT("已采集","Collected"):osT("未运行","Not run");
+  document.getElementById("collectSub").textContent=osT("最近 ","Last run ")+(d.lastRun?fmtT(d.lastRun):osT("未运行","Not run"))+osT(" · 官方核验 "," · Verified ")+d.lastVerified+osT(" · 错误 "," · Errors ")+(d.lastErrors||[]).length;
 
   document.getElementById("candidateRows").innerHTML=(d.candidates||[]).map(function(c,i){
     var bar=Math.min(100,Math.round((c.pressure||0)*100));
-    return '<tr><td class="rank">'+(i+1)+'</td><td><span class="pill '+(c.kind==="plan"?"ok":"dim")+'">'+(c.kind==="plan"?"套餐":"API")+'</span></td><td><b>'+esc(c.providerName)+'</b><br><span class="muted">'+esc(c.name)+'</span></td><td>'+esc(c.window)+'</td><td class="mono '+(c.available?'good':'bad')+'">'+usd(c.costPerM)+'</td><td><div class="bar"><i style="width:'+bar+'%"></i></div><span class="muted">'+pct(c.pressure)+'</span></td><td class="mono">'+pct(c.quality)+' / '+(c.latencyMs==null?"—":Math.round(c.latencyMs)+"ms")+' / '+(c.reliability==null?"—":pct(c.reliability)+" ("+num(c.samples)+")")+'</td><td>'+(c.available?'<span class="good">可用</span>':'<span class="bad">不可用</span>')+'</td><td class="muted">'+esc(c.nextChange)+'</td><td class="muted">'+esc(c.reason)+'</td></tr>';
-  }).join("")||'<tr><td colspan="10" class="muted">暂无候选</td></tr>';
+    return '<tr><td class="rank">'+(i+1)+'</td><td><span class="pill '+(c.kind==="plan"?"ok":"dim")+'">'+(c.kind==="plan"?osT("套餐","Plan"):"API")+'</span></td><td><b>'+esc(providerName(c.provider,c.providerName))+'</b><br><span class="muted">'+esc(c.name)+'</span></td><td>'+esc(routeText(c.window))+'</td><td class="mono '+(c.available?'good':'bad')+'">'+usd(c.costPerM)+'</td><td><div class="bar"><i style="width:'+bar+'%"></i></div><span class="muted">'+pct(c.pressure)+'</span></td><td class="mono">'+pct(c.quality)+' / '+(c.latencyMs==null?"—":Math.round(c.latencyMs)+"ms")+' / '+(c.reliability==null?"—":pct(c.reliability)+" ("+num(c.samples)+")")+'</td><td>'+(c.available?'<span class="good">'+osT('可用','Available')+'</span>':'<span class="bad">'+osT('不可用','Unavailable')+'</span>')+'</td><td class="muted">'+esc(routeText(c.nextChange))+'</td><td class="muted">'+esc(routeText(c.reason))+'</td></tr>';
+  }).join("")||'<tr><td colspan="10" class="muted">'+osT('暂无候选','No candidates')+'</td></tr>';
 
   document.getElementById("providerRows").innerHTML=(d.providers||[]).map(function(p){
-    var peak=(p.peak||[]).map(function(w){return "周"+w.days.join(",")+" "+w.start+"-"+w.end;}).join("<br>")||"无";
-    return '<tr><td><b>'+esc(p.name)+'</b></td><td class="mono">'+esc(p.timezone)+'</td><td>'+peak+'</td><td>'+pct(p.offPeakDiscount)+'</td><td>'+esc(p.currentWindow)+'</td><td class="muted">'+esc(p.nextChange)+'</td><td>'+esc(p.accountLabel||"—")+'</td><td class="src"><a href="'+esc(p.source)+'" target="_blank">官方</a></td></tr>';
-  }).join("")||'<tr><td colspan="8" class="muted">暂无供应商</td></tr>';
+    var peak=(p.peak||[]).map(function(w){return osT("周","Days ")+w.days.join(",")+" "+w.start+"-"+w.end;}).join("<br>")||osT("无","None");
+    return '<tr><td><b>'+esc(providerName(p.id,p.name))+'</b></td><td class="mono">'+esc(p.timezone)+'</td><td>'+peak+'</td><td>'+pct(p.offPeakDiscount)+'</td><td>'+esc(routeText(p.currentWindow))+'</td><td class="muted">'+esc(routeText(p.nextChange))+'</td><td>'+esc(p.accountLabel||"—")+'</td><td class="src"><a href="'+esc(p.source)+'" target="_blank">'+osT("官方","Official")+'</a></td></tr>';
+  }).join("")||'<tr><td colspan="8" class="muted">'+osT('暂无供应商','No providers')+'</td></tr>';
 
   document.getElementById("planRows").innerHTML=(d.plans||[]).map(function(p){
-    return '<tr><td><b>'+esc(p.name)+'</b><br><span class="muted">'+esc(p.providerName)+'</span></td><td class="mono">'+(p.monthlyUsd==null?"—":"$"+p.monthlyUsd)+'</td><td class="mono">'+(p.includedUsd==null?"—":"$"+p.includedUsd)+'</td><td>'+pct(p.baseRatio)+'</td><td>'+esc(p.currentWindow)+'</td><td class="muted">'+esc(p.nextChange)+'</td><td>'+pct(p.effectiveRatio)+'</td><td class="mono">'+usd(p.costPerM)+'</td><td class="mono">'+pct(p.quality)+' / '+(p.latencyMs==null?"—":Math.round(p.latencyMs)+"ms")+' / '+(p.reliability==null?"—":pct(p.reliability)+" ("+num(p.samples)+")")+'</td><td>'+(p.available?'<span class="good">可用</span>':'<span class="bad">不可用</span>')+'</td></tr>';
-  }).join("")||'<tr><td colspan="10" class="muted">暂无套餐</td></tr>';
+    return '<tr><td><b>'+esc(p.name)+'</b><br><span class="muted">'+esc(providerName(p.provider,p.providerName))+'</span></td><td class="mono">'+(p.monthlyUsd==null?"—":"$"+p.monthlyUsd)+'</td><td class="mono">'+(p.includedUsd==null?"—":"$"+p.includedUsd)+'</td><td>'+pct(p.baseRatio)+'</td><td>'+esc(routeText(p.currentWindow))+'</td><td class="muted">'+esc(routeText(p.nextChange))+'</td><td>'+pct(p.effectiveRatio)+'</td><td class="mono">'+usd(p.costPerM)+'</td><td class="mono">'+pct(p.quality)+' / '+(p.latencyMs==null?"—":Math.round(p.latencyMs)+"ms")+' / '+(p.reliability==null?"—":pct(p.reliability)+" ("+num(p.samples)+")")+'</td><td>'+(p.available?'<span class="good">'+osT('可用','Available')+'</span>':'<span class="bad">'+osT('不可用','Unavailable')+'</span>')+'</td></tr>';
+  }).join("")||'<tr><td colspan="10" class="muted">'+osT('暂无套餐','No plans')+'</td></tr>';
 
-  document.getElementById("collectInfo").textContent="最近运行 "+(d.lastRun?fmtT(d.lastRun):"未运行")+" · 官方核验 "+d.lastVerified+" · 数据文件 data/time-pricing.json";
-  document.getElementById("collectErrors").textContent=(d.lastErrors||[]).join(" · ")||"采集无错误";
-  document.getElementById("foot").textContent="OpenSelect · 线路优化 · 每 30 秒自动刷新";
+  document.getElementById("collectInfo").textContent=osT("最近运行 ","Last run ")+(d.lastRun?fmtT(d.lastRun):osT("未运行","Not run"))+osT(" · 官方核验 "," · Verified ")+d.lastVerified+osT(" · 数据文件 data/time-pricing.json"," · Data file data/time-pricing.json");
+  document.getElementById("collectErrors").textContent=(d.lastErrors||[]).join(" · ")||osT("采集无错误","No collection errors");
+  document.getElementById("foot").textContent=osT("OpenSelect · 线路优化 · 每 30 秒自动刷新","OpenSelect · Route optimization · Refreshes every 30 seconds");
 }
 function load(){
-  fetch("/api/routes").then(function(r){return r.json();}).then(render).catch(function(e){document.getElementById("hdr").textContent="加载失败："+e.message;});
+  fetch("/api/routes").then(function(r){return r.json();}).then(render).catch(function(e){document.getElementById("hdr").textContent=osT("加载失败：","Load failed: ")+e.message;});
 }
 document.getElementById("collectBtn").onclick=function(){
-  var b=this; b.disabled=true; document.getElementById("collectMsg").textContent="采集中…";
+  var b=this; b.disabled=true; document.getElementById("collectMsg").textContent=osT("采集中…","Collecting…");
   fetch("/api/pricing/collect",{method:"POST",headers:{"content-type":"application/json"},body:"{}"}).then(function(r){return r.json();}).then(function(j){
     b.disabled=false;
-    document.getElementById("collectMsg").textContent=j.ok?"✓ 采集完成":"采集完成（有错误）";
+    document.getElementById("collectMsg").textContent=j.ok?osT("✓ 采集完成","✓ Collection complete"):osT("采集完成（有错误）","Collection complete (with errors)");
     load();
-  }).catch(function(e){ b.disabled=false; document.getElementById("collectMsg").textContent="失败："+e.message; });
+  }).catch(function(e){ b.disabled=false; document.getElementById("collectMsg").textContent=osT("失败：","Failed: ")+e.message; });
 };
 load();
 setInterval(load,30000);
 </script>
+${PAGE_LOCALE}
 </body>
 </html>`;
 }

@@ -96,6 +96,8 @@ cd OpenSelect
 
 Open the dashboard at [http://127.0.0.1:8789](http://127.0.0.1:8789) and add your provider credentials on the connection page (`接入账号`). Alternatively, run `./bin/opensel import` in another terminal to import existing OpenCode Go credentials from OpenCode.
 
+Use the **English / 中文** button in the navigation bar to switch the dashboard language. Your choice is saved in the browser.
+
 The proxy listens on `http://127.0.0.1:8788` by default. To connect OpenCode, run the following in another terminal, then restart OpenCode:
 
 ```bash
