@@ -6,7 +6,7 @@ export const DASHBOARD_EN: Record<string, string> = {
   "设置":"Settings", "运行参数、免费模型与备份":"Runtime settings, free models, and backups",
   "重置时间按本机时区显示（上游给的是 UTC 绝对时刻）。":"Reset times are shown in your local time zone (upstream times are UTC).",
   "显示全部账号（含已耗尽 / 冷却 / 仅凭据）":"Show all accounts (including exhausted, cooling down, and credentials-only)",
-  "添加账号 / 接入 →":"Add account / connect →", "最优线路":"Best route", "当前时段 / 套餐额度 / 账号压力":"Time window / plan quota / account pressure",
+  "添加账号 / 接入 →":"Add account / connect →", "建议线路":"Suggested route", "仅供参考，不改变实际请求路由":"Advisory only; does not change request routing", "当前时段 / 套餐额度 / 账号压力":"Time window / plan quota / account pressure",
   "接入控制":"Connections", "添加账号 / opencode 接入":"Add account / connect OpenCode", "参数设置":"Settings", "切换阈值 / 轮询 / 免费模型":"Switch threshold / polling / free models",
   "添加账号":"Add account", "标签":"Label", "类型":"Type", "套餐":"Plan", "集成 ID":"Integration ID", "同时注册到 opencode 凭据":"Also register with OpenCode credentials", "添加并校验":"Add and validate",
   "opencode-go：全功能（用量监控 + 自动切换）。其他类型：仅注册凭据，不入切换池。":"OpenCode Go supports usage monitoring and automatic switching. Other types may register credentials without joining the account pool.",

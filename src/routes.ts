@@ -1,5 +1,5 @@
 import { PAGE_LOCALE } from "./page_locale";
-import { tokenStatsByProvider } from "./db";
+import { recentRequests, tokenStatsByProvider } from "./db";
 import { accountPressure, isRateLimited } from "./policy";
 import type { Runtime } from "./state";
 import {
@@ -14,6 +14,7 @@ import {
   type TimePricingData,
 } from "./time_pricing";
 import { UI_CSS, navHtml } from "./ui";
+import { codingAutoOrder, type CodingAutoStep } from "./coding_auto";
 
 const PROVIDER_INTEGRATION: Record<string, string> = {
   opencode: "opencode-go",
@@ -79,7 +80,7 @@ function pickAccount(rt: Runtime, provider: string, plan?: PlanTimeRule): Accoun
   });
   if (!eligible.length) return null;
   eligible.sort((a, b) => accountPressure(rt.usages.get(a.id)) - accountPressure(rt.usages.get(b.id)));
-  const a = eligible[0]!;
+  const a = eligible.find((account) => account.id === rt.forcedAccountId) ?? eligible[0]!;
   return { id: a.id, label: a.label, pressure: accountPressure(rt.usages.get(a.id)) };
 }
 
@@ -192,10 +193,14 @@ export interface PlanTimeView extends PlanTimeRule {
 
 export interface RouteAdvice {
   now: number;
+  proxyPort: number;
+  codingAutoOrder: CodingAutoStep[];
   timezone: string;
   base: TimePricingData["base"];
   scoring: ScoringConfig;
   best: RouteCandidate | null;
+  preferredAccount: { id: string; label: string } | null;
+  lastRequest: { accountLabel: string | null; requestedModel: string | null; servedModel: string | null; status: number; ts: number } | null;
   candidates: RouteCandidate[];
   providers: ProviderTimeView[];
   plans: PlanTimeView[];
@@ -395,17 +400,21 @@ export async function buildRouteAdvice(rt: Runtime): Promise<RouteAdvice> {
   const forcedHasCostCandidate = forcedProvider
     ? candidates.some((c) => c.provider === forcedProvider && c.available)
     : false;
-  const ranked = candidates
-    .filter((c) => !forcedProvider || !forcedHasCostCandidate || c.provider === forcedProvider)
-    .slice()
+  const ranked = candidates.slice()
     .sort((a, b) => (a.available === b.available ? a.score - b.score : a.available ? -1 : 1));
-  const best = ranked.find((c) => c.available) ?? null;
+  const best = ranked.find((c) => c.available && (!forcedHasCostCandidate || c.provider === forcedProvider)) ?? null;
+  const last = recentRequests(1)[0];
+  const lastAccount = last ? rt.config.accounts.find((a) => a.id === last.accountId) : undefined;
   return {
     now: now.getTime(),
+    proxyPort: rt.config.proxy.port,
+    codingAutoOrder: codingAutoOrder(rt.config.policy.codingAutoOrder),
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     base: data.base,
     scoring,
     best,
+    preferredAccount: forced ? { id: forced.id, label: forced.label } : null,
+    lastRequest: last ? { accountLabel: lastAccount?.label ?? null, requestedModel: last.model, servedModel: last.servedModel ?? null, status: last.status, ts: last.ts } : null,
     candidates: ranked,
     providers,
     plans,
@@ -455,8 +464,22 @@ ${navHtml("routes")}
     <div class="statusline" id="hdr">加载中…</div>
   </div>
 
+  <div class="card" id="routeContext" role="status"></div>
+  <div class="card" style="margin-top:14px">
+    <h2 style="margin-top:0" id="orderTitle"></h2>
+    <p class="muted" id="orderHelp"></p>
+    <div id="orderRows"></div>
+    <div class="btnrow"><button type="button" class="btn primary" id="orderSave"></button><span class="msg" id="orderMsg" role="status"></span></div>
+  </div>
+  <div class="card" style="margin-top:14px">
+    <h2 style="margin-top:0">Claude Code 启动命令</h2>
+    <p class="muted" id="commandHelp">仅包含本地代理占位凭据；auto-cli 命令只在当前终端定义别名，不修改配置文件。</p>
+    <div class="fr"><label>auto-cli</label><code id="autoCommand"></code><button type="button" class="btn sm" data-copy-command="autoCommand">复制</button></div>
+    <div class="fr"><label>DeepSeek</label><code id="deepseekCommand"></code><button type="button" class="btn sm" data-copy-command="deepseekCommand">复制</button></div>
+    <p class="muted" id="commandNotice" role="status"></p>
+  </div>
   <div class="cards">
-    <div class="card green"><div class="lbl"><span>当前最优线路</span><span class="pill" id="bestPill">—</span></div><div class="big" id="bestName">—</div><div class="sub" id="bestSub">加载中…</div></div>
+    <div class="card green"><div class="lbl"><span>建议线路</span><span class="pill" id="bestPill">—</span></div><div class="big" id="bestName">—</div><div class="sub" id="bestSub">加载中…</div></div>
     <div class="card"><div class="lbl"><span>有效成本</span><span class="pill">$/M tokens</span></div><div class="big" id="bestCost">—</div><div class="sub" id="bestReason">—</div></div>
     <div class="card cyan"><div class="lbl"><span>当前时段</span><span class="pill" id="windowPill">—</span></div><div class="big" id="windowName">—</div><div class="sub" id="nextChange">—</div></div>
     <div class="card purple"><div class="lbl"><span>数据采集</span><span class="pill" id="collectPill">—</span></div><div class="big" id="collectCount">—</div><div class="sub" id="collectSub">—</div></div>
@@ -532,8 +555,23 @@ function routeText(value){
 function providerName(id, name){
   return id==="deepseek" && name==="DeepSeek 官方" ? osT("DeepSeek 官方","DeepSeek official") : name;
 }
+var orderRows=null;
+var orderLabels={zai:"Z.ai · GLM-5.3-Flash",minimax:"MiniMax · M3.1-Flash",opencode:"OpenCode Go · DeepSeek V4.1 Flash",deepseek:"DeepSeek API · DeepSeek Flash"};
+function renderOrder(){
+  document.getElementById("orderTitle").textContent=osT("coding-auto 线路优先级","coding-auto route priority");
+  document.getElementById("orderHelp").textContent=osT("按顺序尝试选中的线路；额度达到阈值或线路不可用时尝试下一条。至少选择一条，保存后对新请求生效。","Selected routes are tried in order; the next route is used when a route reaches the threshold or is unavailable. Select at least one; saving affects new requests.");
+  document.getElementById("orderSave").textContent=osT("保存线路顺序","Save route order");
+  document.getElementById("orderRows").innerHTML=orderRows.map(function(row,index){return '<div class="fr"><input type="checkbox" data-order-toggle="'+row.id+'"'+(row.enabled?' checked':'')+' aria-label="'+esc(osT('启用 ','Enable ')+orderLabels[row.id])+'"><span>'+(index+1)+'. '+esc(orderLabels[row.id])+'</span><button type="button" class="btn sm" data-order-move="'+row.id+'" data-dir="-1" aria-label="'+esc(osT('上移 ','Move up ')+orderLabels[row.id])+'"'+(index===0?' disabled':'')+'>↑</button><button type="button" class="btn sm" data-order-move="'+row.id+'" data-dir="1" aria-label="'+esc(osT('下移 ','Move down ')+orderLabels[row.id])+'"'+(index===orderRows.length-1?' disabled':'')+'>↓</button></div>';}).join('');
+}
 function render(d){
   document.getElementById("hdr").textContent=osT("当前 ","Now ")+fmtT(d.now)+osT(" · 本机时区 "," · Local time zone ")+d.timezone+osT(" · 基准 "," · Baseline ")+usd(d.base.usdPerMillion)+"/M";
+  var prefix="env -u ANTHROPIC_API_KEY -u OPENAI_API_KEY -u OPENAI_BASE_URL NO_PROXY=localhost,127.0.0.1 no_proxy=localhost,127.0.0.1 ANTHROPIC_BASE_URL=http://127.0.0.1:"+d.proxyPort+" ANTHROPIC_AUTH_TOKEN=openselect claude --model ";
+  document.getElementById("commandHelp").textContent=osT("仅包含本地代理占位凭据；auto-cli 命令只在当前终端定义别名，不修改配置文件。","Contains only the local proxy placeholder credential; the auto-cli alias applies to the current shell and does not modify configuration files.");
+  document.getElementById("autoCommand").textContent="alias auto-cli='"+prefix+'"coding-auto[1m]"'+"'";
+  document.getElementById("deepseekCommand").textContent=prefix+"'deepseek-v4.1-flash[1m]'";
+  if(!orderRows){var active=d.codingAutoOrder||[]; orderRows=active.map(function(id){return {id:id,enabled:true};}).concat(Object.keys(orderLabels).filter(function(id){return active.indexOf(id)<0;}).map(function(id){return {id:id,enabled:false};})); renderOrder();}
+  var last=d.lastRequest;
+  document.getElementById("routeContext").textContent=osT("线路排行仅供参考，不会自动改变请求路由。首选账号：","Route rankings are advisory and do not change request routing. Preferred account: ")+(d.preferredAccount?d.preferredAccount.label:osT("未设置","None"))+osT("。最近一次请求：",". Last request: ")+(last?(last.accountLabel||osT("未落账号","Unassigned"))+" · "+(last.requestedModel||"—")+(last.servedModel && last.servedModel!==last.requestedModel?" → "+last.servedModel:"")+" · HTTP "+last.status+" · "+fmtT(last.ts):osT("暂无","None"));
   var b=d.best;
   if(b){
     document.getElementById("bestName").textContent=providerName(b.provider,b.providerName)+(b.kind==="plan"?" · "+b.name:"");
@@ -549,7 +587,7 @@ function render(d){
     document.getElementById("bestReason").textContent="—";
   }
   document.getElementById("windowName").textContent=b?routeText(b.window):"—";
-  document.getElementById("windowPill").textContent=osT("当前线路","Current route");
+  document.getElementById("windowPill").textContent=osT("建议线路","Suggested route");
   document.getElementById("nextChange").textContent=(d.providers||[]).filter(function(p){return p.nextChange && p.nextChange!=="无分时切换";}).slice(0,2).map(function(p){return providerName(p.id,p.name)+" "+routeText(p.nextChange);}).join(" · ")||osT("无分时切换","No scheduled change");
   document.getElementById("collectCount").textContent=(d.lastErrors&&d.lastErrors.length)?osT("有错误","Errors"):osT("正常","Healthy");
   document.getElementById("collectPill").textContent=d.lastRun?osT("已采集","Collected"):osT("未运行","Not run");
@@ -573,6 +611,34 @@ function render(d){
   document.getElementById("collectErrors").textContent=(d.lastErrors||[]).join(" · ")||osT("采集无错误","No collection errors");
   document.getElementById("foot").textContent=osT("OpenSelect · 线路优化 · 每 30 秒自动刷新","OpenSelect · Route optimization · Refreshes every 30 seconds");
 }
+document.querySelectorAll("[data-copy-command]").forEach(function(button){
+  button.addEventListener("click",function(){
+    var command=document.getElementById(button.getAttribute("data-copy-command")).textContent;
+    var notice=document.getElementById("commandNotice");
+    if(!navigator.clipboard || !navigator.clipboard.writeText){ notice.textContent=osT("无法自动复制，请手动选择命令复制。","Clipboard unavailable; select and copy the command manually."); return; }
+    navigator.clipboard.writeText(command).then(function(){notice.textContent=osT("命令已复制","Command copied");}).catch(function(){notice.textContent=osT("无法自动复制，请手动选择命令复制。","Clipboard unavailable; select and copy the command manually.");});
+  });
+});
+document.getElementById("orderRows").addEventListener("change",function(event){
+  var id=event.target.getAttribute("data-order-toggle"); if(!id) return;
+  var row=orderRows.find(function(item){return item.id===id;}); if(row) row.enabled=event.target.checked;
+});
+document.getElementById("orderRows").addEventListener("click",function(event){
+  var id=event.target.getAttribute("data-order-move"); if(!id) return;
+  var index=orderRows.findIndex(function(item){return item.id===id;}), to=index+Number(event.target.getAttribute("data-dir"));
+  if(index<0||to<0||to>=orderRows.length) return;
+  var temp=orderRows[index]; orderRows[index]=orderRows[to]; orderRows[to]=temp; renderOrder();
+});
+document.getElementById("orderSave").addEventListener("click",function(){
+  var button=this, msg=document.getElementById("orderMsg"), order=orderRows.filter(function(row){return row.enabled;}).map(function(row){return row.id;});
+  if(!order.length){msg.textContent=osT("请至少选择一条线路","Select at least one route");return;}
+  button.disabled=true;
+  fetch("/api/settings",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({codingAutoOrder:order})})
+    .then(function(r){return r.json().then(function(j){if(!r.ok||!j.ok) throw new Error(j.error||"save failed");});})
+    .then(function(){msg.textContent=osT("已保存，新请求生效","Saved; applies to new requests");})
+    .catch(function(e){msg.textContent=osT("保存失败：","Save failed: ")+e.message;})
+    .finally(function(){button.disabled=false;});
+});
 function load(){
   fetch("/api/routes").then(function(r){return r.json();}).then(render).catch(function(e){document.getElementById("hdr").textContent=osT("加载失败：","Load failed: ")+e.message;});
 }

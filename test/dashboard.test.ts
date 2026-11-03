@@ -896,7 +896,10 @@ test("console API: 免费模型的可选/优先级/模式（面板「免费模�
     expect(settingsHtml).toContain("参数设置");
     const routesHtml = await (await fetch(`${base}/routes`)).text();
     expect(routesHtml).toContain("线路优化");
+    expect(routesHtml).toContain('id="autoCommand"');
+    expect(routesHtml).toContain('id="deepseekCommand"');
     const routesApi = (await (await fetch(`${base}/api/routes`)).json()) as J;
+    expect(routesApi.proxyPort).toBe(rt.config.proxy.port);
     expect(routesApi.providers.length).toBe(6);
     expect(routesApi.plans.length).toBeGreaterThan(5);
     expect(routesApi.scoring.qualityWeight).toBe(0.2);
@@ -941,3 +944,49 @@ test("console API: 免费模型的可选/优先级/模式（面板「免费模�
     dash.stop();
   }
 }, 15000);
+
+test("线路建议区分首选账号、最近请求并保留其他供应商候选", async () => {
+  const { buildRouteAdvice } = await import("../src/routes");
+  const preferred = mkAccount("route-preferred", "demo-a");
+  const other = mkAccount("route-other", "demo-b");
+  const mini: Account = { ...mkAccount("route-mini", "demo-c"), integration: "minimax" };
+  const cfg = { ...baseCfg(), accounts: [preferred, other, mini] };
+  const rt = new Runtime(cfg, await loadCatalog());
+  rt.forcedAccountId = preferred.id;
+  const usage = (accountId: string, percent: number) => ({ accountId, ts: Date.now(), rolling: { percent, status: "ok" as const, resetsAt: null }, weekly: { percent: 0, status: "ok" as const, resetsAt: null }, monthly: { percent: 0, status: "ok" as const, resetsAt: null } });
+  rt.setUsage(usage(preferred.id, 0.6));
+  rt.setUsage(usage(other.id, 0.1));
+  logRequest({ ts: Date.now() + 100, sessionId: "route-demo", model: "coding-auto", servedModel: "MiniMax-M3.1-Flash", family: "anthropic", accountId: mini.id, status: 200, attempts: 1, latencyMs: 100, error: null, path: "/v1/messages", client: "claude-code" });
+  const advice = await buildRouteAdvice(rt);
+  expect(advice.preferredAccount?.id).toBe(preferred.id);
+  expect(advice.best?.accountId).toBe(preferred.id);
+  expect(advice.candidates.some((candidate) => candidate.provider !== "opencode")).toBe(true);
+  expect(advice.lastRequest).toMatchObject({ accountLabel: mini.label, requestedModel: "coding-auto", servedModel: "MiniMax-M3.1-Flash", status: 200 });
+  rt.state(preferred.id).invalid = true;
+  const after = await buildRouteAdvice(rt);
+  expect(after.best?.accountId).toBe(other.id);
+});
+
+test("coding-auto 线路顺序保存、回读和校验", async () => {
+  const cfg = baseCfg();
+  await saveConfig(cfg);
+  const rt = new Runtime(cfg, await loadCatalog());
+  const dash = startDashboard(rt, { port: 0 });
+  const base = `http://127.0.0.1:${dash.server.port}`;
+  try {
+    const initial = await (await fetch(`${base}/api/routes`)).json() as J;
+    expect(initial.codingAutoOrder).toEqual(["zai", "minimax", "opencode", "deepseek"]);
+    const saved = await jpost(base, "/api/settings", { codingAutoOrder: ["opencode", "deepseek"] });
+    expect(saved.status).toBe(200);
+    expect((await loadConfig()).policy.codingAutoOrder).toEqual(["opencode", "deepseek"]);
+    expect((await (await fetch(`${base}/api/routes`)).json() as J).codingAutoOrder).toEqual(["opencode", "deepseek"]);
+    expect(rt.config.policy.codingAutoOrder).toEqual(["opencode", "deepseek"]);
+    for (const invalid of [[], ["opencode", "opencode"], ["unknown"]]) {
+      expect((await jpost(base, "/api/settings", { codingAutoOrder: invalid })).status).toBe(400);
+      expect((await loadConfig()).policy.codingAutoOrder).toEqual(["opencode", "deepseek"]);
+    }
+    const denied = await fetch(`${base}/api/settings`, { method: "POST", headers: { "content-type": "application/json", origin: "https://example.invalid" }, body: JSON.stringify({ codingAutoOrder: ["zai"] }) });
+    expect(denied.status).toBe(403);
+    expect((await loadConfig()).policy.codingAutoOrder).toEqual(["opencode", "deepseek"]);
+  } finally { dash.stop(); }
+});

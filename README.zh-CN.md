@@ -182,7 +182,7 @@ Z.ai / MiniMax / DeepSeek 按 Anthropic Messages 原生透传；Command Code 支
 - 5 小时/周窗口映射到现有 `rolling/weekly`，继续用 `switchAt=0.99`；面板账号卡显示两条额度条。
 - 供应商 429：有 `retry-after`/`limitName` 或账号用量已到 100% 才按恢复时间冷却；裸 429 只停 3 秒，不会把有余额的 MiniMax 隐藏 5 分钟。
 - 思考度可用请求头 `x-openselect-effort: low|medium|high|xhigh|max` 覆盖，或账号配置 `defaultEffort`。
-- `coding-auto`：Z.ai GLM-5.3-Flash → MiniMax M3.1-Flash → opencode-go `deepseek-v4.1-flash` → DeepSeek 官方 `deepseek-flash` 自动降级；固定别名（如 `zai/glm-5.3-flash`）只在该供应商内换 key。DeepSeek 官方账号默认 `fallbackOnly`，正常轮换不选，只有其它账号/供应商都不可用时才使用。
+- `coding-auto`：默认按 Z.ai → MiniMax → OpenCode Go DeepSeek → DeepSeek 官方的顺序回退。在线路页面勾选线路、调整顺序并保存后，新请求按选择执行。只勾选 OpenCode Go 时不会回退到未选的线路；页面也提供当前终端使用的 `auto-cli` 别名命令。线路成本排行仅供参考，不自动改变选择顺序。
 - Command Code 使用 Provider API Key（Bearer），支持 `/v1/messages`、`/v1/chat/completions`、`/v1/responses`；没有公开 5h/周额度端点，账号卡显示 0 额度，不参与阈值切换，但参与同 provider 多 key 故障转移。
 - Ollama Cloud 需要 API Key；`baseUrl` 可覆盖默认 `https://ollama.com/v1`。代理原生透传 `/v1/messages`、`/v1/chat/completions`、`/v1/responses`；模型从 `/api/tags` 或 `/v1/models` 动态发现。
 - 多 key：同一 provider 加多个账号即可，按压力/最近使用选号。

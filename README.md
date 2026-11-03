@@ -101,6 +101,12 @@ The proxy listens on `http://127.0.0.1:8788` by default. To connect OpenCode, ru
 
 To undo the integration, run `./bin/opensel unwire`. You can inspect the proposed changes first with `./bin/opensel wire --dry-run`.
 
+## Configure coding-auto routes
+
+Open the **Routes** page, select the routes to enable, use the arrows to set their priority, and save. New `coding-auto` requests try the enabled routes in that order and move to the next available route when a route reaches its quota threshold or cannot serve the request. Existing configurations retain the default Z.ai → MiniMax → OpenCode Go → DeepSeek API order until changed.
+
+To use only the OpenCode Go DeepSeek model, select only **OpenCode Go · DeepSeek V4.1 Flash**. Requests fail when that route is unavailable instead of falling back to an unselected provider. The Routes page also offers a copyable `auto-cli` alias for the current shell. Route cost rankings are advisory and do not reorder your chosen route sequence.
+
 ## Dashboard
 
 | Page | Purpose |

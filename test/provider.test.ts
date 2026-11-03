@@ -256,6 +256,113 @@ describe("provider routing", () => {
     }
   });
 
+  test("coding-auto：达到阈值才跳过供应商并使用首选 OpenCode 账号", async () => {
+    seen.length = 0;
+    const { rt, base } = await setup(
+      [mkAccount("z-threshold", "zai-key", "zai"), mkAccount("m-threshold", "mm-key", "minimax"), mkAccount("go-preferred", "go-key", "opencode-go")],
+      `http://127.0.0.1:${provider.port}/inference/go`,
+    );
+    rt.forcedAccountId = "go-preferred";
+    const setWeekly = (id: string, percent: number) => rt.setUsage({
+      accountId: id, ts: Date.now(),
+      rolling: { percent: 0, status: "active", resetsAt: null },
+      weekly: { percent, status: "active", resetsAt: null },
+      monthly: { percent: 0, status: "active", resetsAt: null },
+    });
+    setWeekly("z-threshold", 1);
+    setWeekly("m-threshold", 0.98);
+    const request = (session: string) => fetch(`${base}/v1/messages`, {
+      method: "POST", headers: H(session),
+      body: JSON.stringify({ model: "coding-auto", max_tokens: 16, messages: [{ role: "user", content: "hi" }] }),
+    });
+    const first = await request("threshold-before");
+    expect(first.status).toBe(200);
+    await first.text();
+    expect(seen.map((s) => s.auth)).toEqual(["Bearer mm-key"]);
+    seen.length = 0;
+    setWeekly("m-threshold", 0.99);
+    const second = await request("threshold-at");
+    expect(second.status).toBe(200);
+    await second.text();
+    expect(seen.map((s) => s.auth)).toEqual(["Bearer go-key"]);
+  });
+
+  test("coding-auto：用户选择 OpenCode 优先，且不会被免费模型替换", async () => {
+    seen.length = 0;
+    const { rt, base } = await setup([mkAccount("order-z", "zai-key", "zai"), mkAccount("order-go", "go-key", "opencode-go")], `http://127.0.0.1:${provider.port}/inference/go`);
+    rt.config.policy.codingAutoOrder = ["opencode", "zai"];
+    rt.config.policy.freeFirstMode = "first";
+    rt.config.policy.freeFirst = ["deepseek-v4.1-flash-free"];
+    const r = await fetch(`${base}/v1/messages`, { method: "POST", headers: H("order-first"), body: JSON.stringify({model:"coding-auto",max_tokens:16,messages:[{role:"user",content:"hi"}]}) });
+    expect(r.status).toBe(200); await r.text();
+    expect(seen.map((x) => x.auth)).toEqual(["Bearer go-key"]);
+    expect(JSON.parse(seen[0]!.body).model).toBe("deepseek-v4.1-flash");
+    expect(recentRequests(30).find((x) => x.sessionId === "order-first")).toMatchObject({model:"coding-auto",servedModel:"deepseek-v4.1-flash",accountId:"order-go"});
+  });
+
+  test("coding-auto：调整供应商顺序后按新顺序失败回退", async () => {
+    seen.length = 0; mmRateLimit = true;
+    try {
+      const { rt, base } = await setup([mkAccount("order-mm", "mm-key", "minimax"), mkAccount("order-z5", "zai-key", "zai")]);
+      rt.config.policy.codingAutoOrder = ["minimax", "zai"];
+      const r = await fetch(`${base}/v1/messages`, { method: "POST", headers: H("order-reverse"), body: JSON.stringify({model:"coding-auto",max_tokens:16,messages:[{role:"user",content:"hi"}]}) });
+      expect(r.status).toBe(200); await r.text();
+      expect(seen.map((x) => x.auth)).toEqual(["Bearer mm-key", "Bearer zai-key"]);
+    } finally { mmRateLimit = false; }
+  });
+
+  test("coding-auto：OpenCode 不可用时按配置顺序回退到 Z.ai", async () => {
+    seen.length = 0; opencode403 = true;
+    try {
+      const { rt, base } = await setup([mkAccount("order-z2", "zai-key", "zai"), mkAccount("order-go2", "go-key", "opencode-go")], `http://127.0.0.1:${provider.port}/inference/go`);
+      rt.config.policy.codingAutoOrder = ["opencode", "zai"];
+      const r = await fetch(`${base}/v1/messages`, { method: "POST", headers: H("order-failover"), body: JSON.stringify({model:"coding-auto",max_tokens:16,messages:[{role:"user",content:"hi"}]}) });
+      expect(r.status).toBe(200); await r.text();
+      expect(seen.map((x) => x.auth)).toEqual(["Bearer go-key", "Bearer zai-key"]);
+    } finally { opencode403 = false; }
+  });
+
+  test("coding-auto：OpenCode 全部达到阈值时直接尝试下一条", async () => {
+    seen.length = 0;
+    const { rt, base } = await setup([mkAccount("order-z6", "zai-key", "zai"), mkAccount("order-go4", "go-key", "opencode-go")], `http://127.0.0.1:${provider.port}/inference/go`);
+    rt.config.policy.codingAutoOrder = ["opencode", "zai"];
+    rt.setUsage({accountId:"order-go4",ts:Date.now(),rolling:{percent:0,status:"active",resetsAt:null},weekly:{percent:0.99,status:"active",resetsAt:null},monthly:{percent:0,status:"active",resetsAt:null}});
+    const r = await fetch(`${base}/v1/messages`, { method: "POST", headers: H("order-threshold"), body: JSON.stringify({model:"coding-auto",max_tokens:16,messages:[{role:"user",content:"hi"}]}) });
+    expect(r.status).toBe(200); await r.text();
+    expect(seen.map((x) => x.auth)).toEqual(["Bearer zai-key"]);
+  });
+
+  test("coding-auto：只选 DeepSeek 官方时不调用其他线路", async () => {
+    seen.length = 0;
+    const ds = { ...mkAccount("order-ds", "ds-key", "deepseek-api"), fallbackOnly: true };
+    const { rt, base } = await setup([mkAccount("order-z3", "zai-key", "zai"), ds]);
+    rt.config.policy.codingAutoOrder = ["deepseek"];
+    const r = await fetch(`${base}/v1/messages`, { method: "POST", headers: H("order-only"), body: JSON.stringify({model:"coding-auto",max_tokens:16,messages:[{role:"user",content:"hi"}]}) });
+    expect(r.status).toBe(200); await r.text();
+    expect(seen.map((x) => x.auth)).toEqual(["Bearer ds-key"]);
+    expect(JSON.parse(seen[0]!.body).model).toBe("deepseek-flash");
+  });
+
+  test("coding-auto：仅选 OpenCode 时失败不偷跑到 DeepSeek 官方", async () => {
+    seen.length = 0; opencode403 = true;
+    try {
+      const ds = { ...mkAccount("order-ds2", "ds-key", "deepseek-api"), fallbackOnly: true };
+      const { rt, base } = await setup([mkAccount("order-go3", "go-key", "opencode-go"), ds], `http://127.0.0.1:${provider.port}/inference/go`);
+      rt.config.policy.codingAutoOrder = ["opencode"];
+      const r = await fetch(`${base}/v1/messages`, { method: "POST", headers: H("order-excluded"), body: JSON.stringify({model:"coding-auto",max_tokens:16,messages:[{role:"user",content:"hi"}]}) });
+      expect(r.status).toBeGreaterThanOrEqual(400); await r.text();
+      expect(seen.map((x) => x.auth)).toEqual(["Bearer go-key"]);
+    } finally { opencode403 = false; }
+  });
+
+  test("coding-auto：损坏的显式线路配置不会静默启用其他线路", async () => {
+    seen.length = 0;
+    const { rt, base } = await setup([mkAccount("order-z4", "zai-key", "zai")]);
+    rt.config.policy.codingAutoOrder = [];
+    const r = await fetch(`${base}/v1/messages`, { method: "POST", headers: H("order-invalid"), body: JSON.stringify({model:"coding-auto",max_tokens:16,messages:[{role:"user",content:"hi"}]}) });
+    expect(r.status).toBe(503); expect(seen).toHaveLength(0);
+  });
+
   test("MiniMax 裸 429 只做 3s 冷却，不按 5h 窗口冷却", async () => {
     seen.length = 0;
     mmRateLimit = true;

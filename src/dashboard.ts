@@ -22,6 +22,7 @@ import { requestsPage, switchesPage } from "./logs";
 import { isProviderIntegration, providerModelIds, PROVIDER_LABELS } from "./providers";
 import { pricingTablesHtml } from "./pricing";
 import { UI_CSS, navHtml } from "./ui";
+import { codingAutoOrder, isCodingAutoOrder } from "./coding_auto";
 import { DASHBOARD_EN, PRICING_EN } from "./dashboard_locale";
 
 /** per-account available-model cache (populated on demand via /api/models/refresh) */
@@ -179,7 +180,7 @@ ${navHtml("dashboard")}
   </div>
   <div class="grid accgrid" id="accounts" data-view="dashboard"></div>
 
-  <h2 data-view="dashboard">最优线路 <span class="muted">当前时段 / 套餐额度 / 账号压力</span></h2>
+  <h2 data-view="dashboard">建议线路 <span class="muted">仅供参考，不改变实际请求路由</span></h2>
   <div class="card" data-view="dashboard" id="bestRouteCard">加载中…</div>
 
   <h2 data-view="connect">接入控制 <span class="muted">添加账号 / opencode 接入</span></h2>
@@ -1482,6 +1483,10 @@ async function handleSettings(rt: Runtime, req: Request): Promise<Response> {
   const cfg = await loadConfig();
   const catalog = await loadCatalog();
   const errs: string[] = [];
+  if ("codingAutoOrder" in body) {
+    if (!isCodingAutoOrder(body.codingAutoOrder)) errs.push("coding-auto 至少选择一条线路，且线路不能重复或未知");
+    else cfg.policy.codingAutoOrder = codingAutoOrder(body.codingAutoOrder);
+  }
   if ("switchAt" in body) {
     const v = Number(body.switchAt);
     if (!Number.isFinite(v) || v < SWITCH_AT_MIN || v > SWITCH_AT_MAX) errs.push(`阈值须在 ${SWITCH_AT_MIN}–${SWITCH_AT_MAX} 之间`);

@@ -36,6 +36,8 @@ export interface PolicyConfig {
   cooldownFallbackSec: number;
   /** session -> account affinity TTL */
   sessionTtlSec: number;
+  /** Ordered, explicitly enabled coding-auto routes. Missing means the historical default order. */
+  codingAutoOrder?: import("./coding_auto").CodingAutoStep[];
   /**
    * 有序免费模型候选列表：客户端请求付费模型时，先按此顺序让免费模型承接；
    * 免费模型不可用（429/403/404/400）时自动回落到原请求的付费模型。

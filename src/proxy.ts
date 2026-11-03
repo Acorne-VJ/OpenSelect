@@ -8,10 +8,11 @@ import {
   type Catalog,
 } from "./catalog";
 import { logRequest, updateRequestTokens } from "./db";
-import { pickAccount, type PolicyDecision } from "./policy";
+import { eligibility, pickAccount, type PolicyDecision } from "./policy";
 import { parseTokenUsage, tapUsageStream } from "./tokens";
 import { deepSeekFallbackRoute, resolveProviderRoute } from "./providers";
 import { handleProviderRequest } from "./provider_proxy";
+import { codingAutoOrder } from "./coding_auto";
 import { handleDeepSeekTool } from "./tools";
 import type { Runtime } from "./state";
 import {
@@ -549,7 +550,7 @@ function contextOverflowMessage(text: string): string | null {
   return `prompt is too long: ${prompt} tokens > ${max} maximum; run /compact or reduce context`;
 }
 
-export async function handleProxyRequest(rt: Runtime, req: Request): Promise<Response> {
+export async function handleProxyRequest(rt: Runtime, req: Request, opts?: { disableFreeRouting?: boolean; originalRequestedModel?: string }): Promise<Response> {
   const started = Date.now();
   const url = new URL(req.url);
 
@@ -579,9 +580,9 @@ export async function handleProxyRequest(rt: Runtime, req: Request): Promise<Res
   const isCountTokens = family === "anthropic" && normPath === "/messages/count_tokens";
   const isOpenAiBodyModel = normPath === "/chat/completions" || normPath === "/responses";
   /** 用户配置的免费优先候选（有序） */
-  const freeFirstList = Array.isArray(rt.config.policy.freeFirst) ? rt.config.policy.freeFirst : [];
+  const freeFirstList = !opts?.disableFreeRouting && Array.isArray(rt.config.policy.freeFirst) ? rt.config.policy.freeFirst : [];
   /** 免费模型三态：off 不替换 / first 先免费后付费 / fallback 先付费、付费全挂才用免费 */
-  const freeMode = rt.config.policy.freeFirstMode ?? "first";
+  const freeMode = opts?.disableFreeRouting ? "off" : rt.config.policy.freeFirstMode ?? "first";
 
   // Buffer the body once — required for retries and model detection. Bounded to guard memory.
   let bodyBuf: ArrayBuffer | null = null;
@@ -625,6 +626,47 @@ export async function handleProxyRequest(rt: Runtime, req: Request): Promise<Res
   let modelInfo = model ? catalog.models[model] : undefined;
   /** 客户端原始请求模型：zen 全挂落付费后，台账仍记录客户端点名模型，served_model 记实际服务模型 */
   const requestedModel = model;
+
+  // Only coding-auto uses the user-configured provider sequence. A missing setting
+  // preserves the historic chain; an invalid explicit setting fails closed.
+  if (model === "coding-auto" && (isMessages || isCountTokens)) {
+    const order = codingAutoOrder(rt.config.policy.codingAutoOrder);
+    if (!order.length) return jsonResponse(503, anthropicError("openselect_route_config", "coding-auto 线路配置无效或为空"));
+    const run = async (index: number): Promise<Response> => {
+      const step = order[index]!;
+      const next = index + 1 < order.length ? () => run(index + 1) : undefined;
+      if (step === "opencode") {
+        // Explicitly configured routes must not retry a drained account merely
+        // because the generic pool has a last-resort selection policy.
+        if (rt.config.policy.codingAutoOrder !== undefined) {
+          const now = Date.now();
+          const eligible = rt.config.accounts.some((account) => account.integration === "opencode-go" &&
+            eligibility(account, rt.states.get(account.id), rt.usages.get(account.id), { free: false, now, switchAt: rt.config.policy.switchAt }).eligible);
+          if (!eligible) return next ? next() : jsonResponse(503, anthropicError("openselect_provider_unavailable", "OpenCode Go 暂无符合阈值的账号"));
+        }
+        const headers = new Headers(req.headers);
+        headers.delete("content-length");
+        headers.set("x-openselect-no-deepseek-fallback", "1");
+        const child = new Request(req.url, { method: req.method, headers, body: rewriteBodyModel(bodyBuf, "deepseek-v4.1-flash") });
+        const response = await handleProxyRequest(rt, child, { disableFreeRouting: rt.config.policy.codingAutoOrder !== undefined, originalRequestedModel: "coding-auto" });
+        if (!next || response.status < 400 || response.status === 400 || response.status === 413) return response;
+        try { await response.body?.cancel(); } catch { /* best effort */ }
+        return next();
+      }
+      const aliases = { zai: "zai/glm-5.3-flash", minimax: "minimax/MiniMax-M3.1-Flash", deepseek: "deepseek/deepseek-flash" } as const;
+      const route = resolveProviderRoute(aliases[step]);
+      if (!route) return jsonResponse(503, anthropicError("openselect_route_config", "coding-auto 线路配置无效"));
+      // Keep adjacent Z.ai and MiniMax in one provider chain so failover logging is retained.
+      if (step !== "deepseek" && next && order[index + 1] !== "opencode" && order[index + 1] !== "deepseek") {
+        const following = resolveProviderRoute(aliases[order[index + 1] as "zai" | "minimax"]);
+        if (following) route.candidates.push(...following.candidates);
+        const after = index + 2 < order.length ? () => run(index + 2) : undefined;
+        return handleProviderRequest({ req, url, bodyBuf, requestedModel: model!, route: { ...route, strict: false }, rt, fallback: after });
+      }
+      return handleProviderRequest({ req, url, bodyBuf, requestedModel: model!, route: { ...route, strict: false }, rt, fallback: next, allowFallbackOnly: step === "deepseek" });
+    };
+    return run(0);
+  }
 
   // 直连供应商与 coding-auto：Anthropic Messages 原生透传。
   // Command Code 同时支持 OpenAI chat/responses；Ollama 由 provider_proxy 做 Anthropic→chat 翻译。
@@ -1145,8 +1187,8 @@ export async function handleProxyRequest(rt: Runtime, req: Request): Promise<Res
       logRequest({
         ts: started,
         sessionId,
-        model: requestedModel,
-        servedModel: isFreeAttempt || zenFellBack ? attemptModel : null,
+        model: opts?.originalRequestedModel ?? requestedModel,
+        servedModel: isFreeAttempt || zenFellBack || opts?.originalRequestedModel ? attemptModel : null,
         family,
         accountId: account.id,
         provider: account.integration,
@@ -1255,7 +1297,7 @@ export async function handleProxyRequest(rt: Runtime, req: Request): Promise<Res
       logRequest({
         ts: started,
         sessionId,
-        model: requestedModel,
+        model: opts?.originalRequestedModel ?? requestedModel,
         family,
         accountId: account.id,
         provider: account.integration,
@@ -1298,7 +1340,7 @@ export async function handleProxyRequest(rt: Runtime, req: Request): Promise<Res
         logRequest({
           ts: started,
           sessionId,
-          model: requestedModel,
+          model: opts?.originalRequestedModel ?? requestedModel,
           family,
           accountId: account.id,
           provider: account.integration,
@@ -1319,8 +1361,8 @@ export async function handleProxyRequest(rt: Runtime, req: Request): Promise<Res
       logRequest({
         ts: started,
         sessionId,
-        model: requestedModel,
-        servedModel: isFreeAttempt || zenFellBack ? attemptModel : null,
+        model: opts?.originalRequestedModel ?? requestedModel,
+        servedModel: isFreeAttempt || zenFellBack || opts?.originalRequestedModel ? attemptModel : null,
         family,
         accountId: account.id,
         provider: account.integration,
@@ -1426,8 +1468,8 @@ export async function handleProxyRequest(rt: Runtime, req: Request): Promise<Res
     logId = logRequest({
       ts: started,
       sessionId,
-      model: requestedModel,
-      servedModel: isFreeAttempt || zenFellBack ? attemptModel : null,
+      model: opts?.originalRequestedModel ?? requestedModel,
+      servedModel: isFreeAttempt || zenFellBack || opts?.originalRequestedModel ? attemptModel : null,
       family,
       accountId: account.id,
       provider: account.integration,
@@ -1451,7 +1493,7 @@ export async function handleProxyRequest(rt: Runtime, req: Request): Promise<Res
   logRequest({
     ts: started,
     sessionId,
-    model: requestedModel,
+    model: opts?.originalRequestedModel ?? requestedModel,
     family,
     accountId: accountLabel,
     status: lastErrorResponse?.status ?? 503,
