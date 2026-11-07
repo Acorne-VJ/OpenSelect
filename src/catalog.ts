@@ -20,6 +20,8 @@ let cache: Catalog | null = null;
 export async function loadCatalog(): Promise<Catalog> {
   if (cache) return cache;
   const models = await readJson<Record<string, ModelInfo>>(MODELS_PATH, {});
+  // OpenCode Go lists this model as vision-capable; leave unknown models unspecified.
+  if (models["deepseek-v4.1-flash"]) models["deepseek-v4.1-flash"].inputModalities = ["text", "image"];
   // 直连供应商的模型别名（zai/...、minimax/...、coding-auto、commandcode/...）动态并入目录，
   // 不写入 data/models.json，避免 sync-catalog 覆盖。
   for (const m of providerCatalogModels()) if (!models[m.id]) models[m.id] = m;

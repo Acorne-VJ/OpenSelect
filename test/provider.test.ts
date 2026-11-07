@@ -300,6 +300,56 @@ describe("provider routing", () => {
     expect(recentRequests(30).find((x) => x.sessionId === "order-first")).toMatchObject({model:"coding-auto",servedModel:"deepseek-v4.1-flash",accountId:"order-go"});
   });
 
+  test("coding-auto：逐候选过滤未知图片能力并保留工具图片", async () => {
+    seen.length = 0;
+    const { rt, base } = await setup([mkAccount("cap-z", "zai-key", "zai"), mkAccount("cap-m", "mm-key", "minimax")]);
+    rt.config.policy.codingAutoOrder = ["zai", "minimax"];
+    const image = { type: "image", source: { type: "base64", media_type: "image/png", data: "YWJj" } };
+    const response = await fetch(`${base}/v1/messages`, { method: "POST", headers: H("cap-image"),
+      body: JSON.stringify({ model: "coding-auto", max_tokens: 16, thinking: { type: "adaptive" },
+        messages: [{ role: "user", content: [{ type: "tool_result", tool_use_id: "id", content: [image] }] }] }) });
+    expect(response.status).toBe(200); await response.text();
+    expect(seen.map((v) => v.auth)).toEqual(["Bearer mm-key"]);
+    expect(JSON.parse(seen[0]!.body).messages[0].content[0].content[0]).toEqual(image);
+  });
+
+  test("coding-auto：关闭思考不能被 MiniMax 静默改为开启", async () => {
+    seen.length = 0;
+    const { rt, base } = await setup([mkAccount("cap-moff", "mm-key", "minimax"), mkAccount("cap-zoff", "zai-key", "zai"), mkAccount("cap-gooff", "go-key", "opencode-go")], `http://127.0.0.1:${provider.port}/inference/go`);
+    rt.config.policy.codingAutoOrder = ["minimax", "zai", "opencode"];
+    const response = await fetch(`${base}/v1/messages`, { method: "POST", headers: H("cap-off"),
+      body: JSON.stringify({ model: "coding-auto", max_tokens: 16, thinking: { type: "disabled" }, messages: [{ role: "user", content: "hi" }] }) });
+    expect(response.status).toBe(200); await response.text();
+    expect(seen.map((v) => v.auth)).toEqual(["Bearer go-key"]);
+    expect(JSON.parse(seen[0]!.body).thinking.type).toBe("disabled");
+  });
+
+  test("coding-auto：无兼容候选时说明各线路原因并记录请求日志", async () => {
+    seen.length = 0;
+    const { rt, base } = await setup([mkAccount("cap-zonly", "zai-key", "zai")]);
+    rt.config.policy.codingAutoOrder = ["zai"];
+    const response = await fetch(`${base}/v1/messages`, { method: "POST", headers: H("cap-none"),
+      body: JSON.stringify({ model: "coding-auto", max_tokens: 16, messages: [{ role: "user", content: [{ type: "image", source: { type: "base64", data: "YWJj" } }] }] }) });
+    expect(response.status).toBe(400);
+    const body = await response.json() as any;
+    expect(body.error.message).toContain("zai: 图片来源类型未验证或不支持");
+    expect(seen.length).toBe(0);
+    expect(recentRequests(20).find((r) => r.sessionId === "cap-none")?.error).toContain("图片来源类型未验证或不支持");
+  });
+
+  test("coding-auto：文件图片跳过无法转换的 OpenCode 并原样发送官方线路", async () => {
+    seen.length = 0;
+    const ds = { ...mkAccount("cap-ds", "ds-key", "deepseek-api"), fallbackOnly: true };
+    const { rt, base } = await setup([mkAccount("cap-go", "go-key", "opencode-go"), ds], `http://127.0.0.1:${provider.port}/inference/go`);
+    rt.config.policy.codingAutoOrder = ["opencode", "deepseek"];
+    const image = { type: "image", source: { type: "file", file_id: "file-test" } };
+    const response = await fetch(`${base}/v1/messages`, { method: "POST", headers: H("cap-file"),
+      body: JSON.stringify({ model: "coding-auto", max_tokens: 16, messages: [{ role: "user", content: [image] }] }) });
+    expect(response.status).toBe(200); await response.text();
+    expect(seen.map((v) => v.auth)).toEqual(["Bearer ds-key"]);
+    expect(JSON.parse(seen[0]!.body).messages[0].content[0]).toEqual(image);
+  });
+
   test("coding-auto：调整供应商顺序后按新顺序失败回退", async () => {
     seen.length = 0; mmRateLimit = true;
     try {

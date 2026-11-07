@@ -13,6 +13,7 @@ import {
   manualStartHint,
   pruneBackups,
   pushBackupToRemote,
+  scheduledBackupPushArgs,
   validateRemote,
   restoreBackup,
   verifyBackup,
@@ -663,7 +664,8 @@ async function cmdInstall(): Promise<void> {
   console.log(`  plist: ${LAUNCH_AGENT}`);
 
   // 定时备份任务：每日 03:30 执行 opensel backup --keep 14（配置了异地远端则一并推送）
-  const rawBackupRemote = (await loadConfig()).backup?.remote ?? null;
+  const scheduledBackup = (await loadConfig()).backup;
+  const rawBackupRemote = scheduledBackup?.remote ?? null;
   let backupRemote: string | null = null;
   if (rawBackupRemote) {
     const bad = validateRemote(rawBackupRemote);
@@ -674,9 +676,8 @@ async function cmdInstall(): Promise<void> {
     }
   }
   // plist 是 XML：远端必须转义（否则含 & 会让 plist 非法，含 < 可注入任意键）
-  const backupPushArgs = backupRemote
-    ? `<string>--push</string><string>${xmlEscape(backupRemote)}</string><string>--yes</string>`
-    : "";
+  const backupPushArgs = scheduledBackupPushArgs(backupRemote, scheduledBackup?.encryptRemote === true)
+    .map((arg) => `<string>${xmlEscape(arg)}</string>`).join("");
   const backupPlist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
@@ -944,13 +945,17 @@ async function cmdBackup(flags: Flags): Promise<void> {
 
     // 2) 推送到远端（写远端 → 必须显式 --yes）
     if (flags.push !== undefined) {
+      if (flags.encrypt !== undefined && ![true, "true", "1", "yes", "false", "0", "no"].includes(flags.encrypt)) {
+        console.error("✗ --encrypt 只接受 true 或 false");
+        process.exit(1);
+      }
       const remote = typeof flags.push === "string" ? flags.push : "";
       const remoteErr = validateRemote(remote);
       if (remoteErr) {
         console.error(`✗ --push 远端地址无效: ${remoteErr}`);
         process.exit(1);
       }
-      const encrypt = isTrue(flags.encrypt);
+      const encrypt = isTrue(flags.encrypt) || (await loadConfig()).backup?.encryptRemote === true;
       const passphrase = process.env.OPENSELECT_BACKUP_PASSPHRASE ?? "";
       if (encrypt && !passphrase) {
         console.error("✗ 加密推送需要环境变量 OPENSELECT_BACKUP_PASSPHRASE（不要写在命令行里）");
@@ -1016,10 +1021,20 @@ async function cmdBackup(flags: Flags): Promise<void> {
         console.error(`✗ 远端地址无效: ${remoteErr}`);
         process.exit(1);
       }
-      cfgRemote.backup = { ...(cfgRemote.backup ?? {}), remote: target };
+      if (flags.encrypt !== undefined && ![true, "true", "1", "yes", "false", "0", "no"].includes(flags.encrypt)) {
+        console.error("✗ --encrypt 只接受 true 或 false");
+        process.exit(1);
+      }
+      cfgRemote.backup = { ...(cfgRemote.backup ?? {}), remote: target,
+        encryptRemote: flags.encrypt === undefined ? cfgRemote.backup?.encryptRemote === true : isTrue(flags.encrypt) };
       await saveConfig(cfgRemote);
       console.log(`✓ 已设置异地备份远端: ${target}`);
-      console.log("  ⚠ 每日 03:30 的定时备份会把**明文归档（含账号 Key）**推送到该远端：远端必须是私有仓库；定时任务暂不支持加密（需要加密请手动 opensel backup --push <remote> --encrypt）");
+      if (cfgRemote.backup.encryptRemote) {
+        console.log("  定时远端备份已启用加密；请向 launchd 提供 OPENSELECT_BACKUP_PASSPHRASE。未提供时拒绝推送，不会回退明文。");
+        console.log('  先在当前 shell 安全设置口令环境变量，再运行 launchctl setenv OPENSELECT_BACKUP_PASSPHRASE "$OPENSELECT_BACKUP_PASSPHRASE"；重新登录后需重新设置。');
+      } else {
+        console.log("  ⚠ 定时备份推送明文归档（含账号 Key）；可添加 --encrypt 启用加密并重新执行 opensel install。");
+      }
       console.log("  执行 opensel install 让每日 03:30 的定时备份推送到该远端");
       return;
     }
@@ -1303,7 +1318,7 @@ function usage(): void {
   opensel backup [--out <path>] [--list] [--keep N] [--sign|--sign-if-possible]
                                            应用级备份（config+台账+wired+plist，SHA-256 校验；默认保留最新 14 份）
   opensel backup --push <remote> [--encrypt] [--yes]   推送备份到 git 远端（--encrypt 用 OPENSELECT_BACKUP_PASSPHRASE 加密）
-  opensel backup --remote <url|off>                    只设置/清除异地备份远端（不改本地备份）
+  opensel backup --remote <url|off> [--encrypt[=false]] 设置/清除异地备份远端；--encrypt 启用定时远端加密
   opensel backup --fetch <remote> [--allow-unsigned]
                                            从 git 远端拉取备份并逐个校验 SHA-256（+验签）
   opensel restore <path|latest> [--dry-run] [--no-service] [--allow-unsigned] [--yes]

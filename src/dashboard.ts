@@ -857,11 +857,11 @@ function render(s){
   var bk=s.backups||{list:[],keyFingerprint:null,hasKey:false,remote:null};
   var remoteLine = bk.remote
     ? '<br>异地备份远端 <code>'+esc(bk.remote)+'</code> <span class="muted">（每日 03:30 定时任务自动推送；推送/拉取在 CLI：<code>opensel backup --push/--fetch</code>）</span>'
-      + '<br><span style="color:#d29922">⚠ 定时备份推送的是<b>明文归档（含账号 Key）</b>：远端必须是私有仓库；定时任务暂不支持加密（需要加密请手动 <code>opensel backup --push &lt;remote&gt; --encrypt</code>）</span>'
+      + (bk.encryptRemote ? '<br><span class="muted">已配置加密；运行 <code>opensel install</code> 更新定时任务，并向 launchd 提供 OPENSELECT_BACKUP_PASSPHRASE。缺少口令时拒绝推送。</span>' : '<br><span style="color:#d29922">⚠ 当前配置为明文远端备份（含账号 Key）；使用 <code>opensel backup --remote &lt;url&gt; --encrypt</code> 启用加密。</span>')
     : '<br><span class="muted">未配置异地备份远端（<code>opensel backup --remote &lt;url&gt;</code> 设置；推送/拉取在 CLI）</span>';
   if (osLang === 'en') remoteLine = bk.remote
     ? '<br>Remote backup <code>'+esc(bk.remote)+'</code> <span class="muted">(scheduled push daily at 03:30; use <code>opensel backup --push/--fetch</code> for manual push/pull)</span>'
-      + '<br><span style="color:#d29922">⚠ Scheduled backups push <b>plaintext archives containing account keys</b>. The remote must be private. Scheduled encryption is not supported; use <code>opensel backup --push &lt;remote&gt; --encrypt</code> manually for encryption.</span>'
+      + (bk.encryptRemote ? '<br><span class="muted">Encryption configured; run <code>opensel install</code> to update the schedule and provide OPENSELECT_BACKUP_PASSPHRASE to launchd. A missing passphrase prevents the push.</span>' : '<br><span style="color:#d29922">⚠ Remote backup is configured as plaintext and includes account keys. Enable encryption using <code>opensel backup --remote &lt;url&gt; --encrypt</code>.</span>')
     : '<br><span class="muted">No remote backup configured. Set one with <code>opensel backup --remote &lt;url&gt;</code>; push/pull through the CLI.</span>';
   document.getElementById("backupInfo").innerHTML = (bk.hasKey
     ? (osT("信任锚已配置（指纹 <b>","Trust anchor configured (fingerprint <b>")+esc(bk.keyFingerprint||"-")+osT("</b>）· 备份目录 ","</b>) · Backup directory ")+esc(BACKUP_DIR_TEXT)+osT(" · 签名备份可被远端验签"," · Signed backups can be verified remotely"))
@@ -1115,7 +1115,7 @@ async function buildState(rt: Runtime, includeBackups = false) {
     alerts: recentAlerts(20),
     backups: includeBackups
       ? await buildBackupsState()
-      : { list: [], keyFingerprint: publicKeyFingerprint(), hasKey: hasTrustAnchor(), remote: (cfg.backup?.remote ?? null) },
+      : { list: [], keyFingerprint: publicKeyFingerprint(), hasKey: hasTrustAnchor(), remote: (cfg.backup?.remote ?? null), encryptRemote: cfg.backup?.encryptRemote === true },
     current: {
       forcedAccountId: rt.forcedAccountId,
       // 服务刚重启还没有请求时，回退到最近活跃会话所在的账号
@@ -1188,6 +1188,7 @@ async function buildBackupsStateUncached(): Promise<{
   keyFingerprint: string | null;
   hasKey: boolean;
   remote: string | null;
+  encryptRemote: boolean;
 }> {
   const keyFingerprint = publicKeyFingerprint();
   const hasKey = hasTrustAnchor();
@@ -1208,7 +1209,8 @@ async function buildBackupsStateUncached(): Promise<{
       safety: b.safety,
     });
   }
-  return { list, keyFingerprint, hasKey, remote: (await loadConfig()).backup?.remote ?? null };
+  const backup = (await loadConfig()).backup;
+  return { list, keyFingerprint, hasKey, remote: backup?.remote ?? null, encryptRemote: backup?.encryptRemote === true };
 }
 
 async function buildBackupsState(): Promise<{
@@ -1216,6 +1218,7 @@ async function buildBackupsState(): Promise<{
   keyFingerprint: string | null;
   hasKey: boolean;
   remote: string | null;
+  encryptRemote: boolean;
 }> {
   if (backupStateCache && Date.now() - backupStateCache.ts < 60_000) return backupStateCache.value;
   const value = await buildBackupsStateUncached();

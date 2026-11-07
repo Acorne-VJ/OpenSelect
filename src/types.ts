@@ -89,7 +89,7 @@ export interface Config {
    * 备份相关的持久化设置。
    * remote = 异地备份的 git 远端（定时备份任务会推送到它）；null/未设 = 只做本地备份。
    */
-  backup?: { remote?: string | null };
+  backup?: { remote?: string | null; encryptRemote?: boolean };
   /**
    * opencode zen 免费层直通设置。
    * enabled = 是否启用（默认 true）；port = 本地 opencode serve 监听端口（默认 8790）；
@@ -141,6 +141,8 @@ export interface ModelInfo {
     cacheWrite?: number;
     tiers?: Array<{ input: number; output: number; cacheRead?: number; cacheWrite?: number }>;
   };
+  /** Known input modalities; omitted when the upstream capability is not verified. */
+  inputModalities?: Array<"text" | "image">;
   /** 直连供应商（opencode-go 之外的 provider 路由） */
   provider?: "opencode-go" | "zai" | "minimax" | "deepseek" | "commandcode" | "ollama" | "auto";
   /** 实际发给上游的模型 ID（别名与上游不同时使用） */
@@ -183,6 +185,7 @@ export interface RequestLogEntry {
   outputTokens?: number | null;
   /** 命中缓存的输入 token */
   cacheReadTokens?: number | null;
+  cacheReadKnown?: boolean | null;
   /** 写入缓存的输入 token */
   cacheWriteTokens?: number | null;
   /** 总 token（input + cacheRead + cacheWrite + output） */

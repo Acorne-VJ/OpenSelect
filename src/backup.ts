@@ -26,6 +26,11 @@ export const LAUNCH_AGENT = join(HOME, "Library", "LaunchAgents", `${LAUNCH_LABE
 export const LAUNCH_BACKUP_LABEL = "com.openselect.backup";
 export const LAUNCH_BACKUP_AGENT = join(HOME, "Library", "LaunchAgents", `${LAUNCH_BACKUP_LABEL}.plist`);
 
+/** launchd receives no passphrase in its plist; it inherits the launchd environment. */
+export function scheduledBackupPushArgs(remote: string | null, encryptRemote: boolean): string[] {
+  return remote ? ["--push", remote, ...(encryptRemote ? ["--encrypt"] : []), "--yes"] : [];
+}
+
 const MANIFEST_NAME = "manifest.json";
 const TOOL_TAG = "openselect";
 /** 允许出现在备份中的文件名（白名单：manifest 里出现其它名字一律拒绝，防路径穿越） */

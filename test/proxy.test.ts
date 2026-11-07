@@ -409,6 +409,33 @@ describe("proxy", () => {
     expect(j.error?.message).toContain("1048576");
   });
 
+  test("large image payload is forwarded without treating base64 as text tokens", async () => {
+    const image = "YWJj".repeat(1_050_000);
+    const before = seen.length;
+    const r = await fetch(`${base}/v1/messages`, {
+      method: "POST",
+      headers: { ...H("sess-large-image"), "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({
+        model: "deepseek-v4.1-flash",
+        max_tokens: 16,
+        stream: true,
+        messages: [
+          { role: "user", content: "Describe the image" },
+          { role: "assistant", content: [{ type: "tool_use", id: "img1", name: "read", input: {} }] },
+          { role: "user", content: [{ type: "tool_result", tool_use_id: "img1", content: [
+            { type: "text", text: "Loaded" },
+            { type: "image", source: { type: "base64", media_type: "image/png", data: image } },
+          ] }] },
+        ],
+      }),
+    });
+    if (r.status !== 200) throw new Error(`Unexpected response ${r.status}: ${await r.text()}`);
+    await r.text();
+    expect(seen.length).toBeGreaterThan(before);
+    const forwarded = JSON.parse(seen[seen.length - 1]!.body!);
+    expect(forwarded.messages.at(-1).content[0].image_url.url).toBe(`data:image/png;base64,${image}`);
+  });
+
   test("sticky: same session goes straight to a2", async () => {
     const before = seen.length;
     const r = await fetch(`${base}/chat/completions`, {

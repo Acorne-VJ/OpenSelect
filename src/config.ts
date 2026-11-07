@@ -40,7 +40,7 @@ export function defaultConfig(): Config {
     },
     monitor: { pollSec: 45 },
     opencode: { autoActivate: true },
-    backup: { remote: null },
+    backup: { remote: null, encryptRemote: false },
     zen: { enabled: true, port: 8790, fallbackModel: "deepseek-v4.1-flash" },
     accounts: [],
   };
@@ -124,6 +124,7 @@ export function normalizeConfig(raw: Partial<Config>): Config {
   cfg.backup = {
     remote:
       typeof raw.backup?.remote === "string" && raw.backup.remote.trim() !== "" ? raw.backup.remote.trim() : null,
+    encryptRemote: raw.backup?.encryptRemote === true,
   };
   // zen 免费层：端口/兜底模型做类型清洗，避免手改配置写坏后运行期崩溃
   cfg.zen = {

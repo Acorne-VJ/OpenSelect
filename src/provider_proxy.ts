@@ -1,5 +1,5 @@
 import { detectClient } from "./client";
-import { logRequest, updateRequestTokens } from "./db";
+import { logRequest, updateRequestContentTiming, updateRequestDuration, updateRequestTokens } from "./db";
 import { accountPressure, eligibility, isRateLimited } from "./policy";
 import { parseTokenUsage, tapUsageStream } from "./tokens";
 import { providerBase, providerIntegration, type ProviderCandidate, type ProviderRoute } from "./providers";
@@ -138,19 +138,14 @@ function rewriteBody(
   body.model = candidate.model;
   if (countTokens || kind !== "anthropic") return JSON.stringify(body);
 
-  if (candidate.provider === "zai") {
+  if (candidate.provider === "zai" || candidate.provider === "deepseek") {
+    const selected = (body.output_config as { effort?: string } | undefined)?.effort;
     delete body.output_config;
     const thinking = body.thinking as { type?: string } | undefined;
-    if (!thinking || thinking.type !== "enabled") body.thinking = { type: "enabled" };
-    if ((body.thinking as { type?: string }).type === "disabled") {
-      body.thinking = { type: "enabled" };
-      body.reasoning_effort = "low";
+    if (!thinking || thinking.type === "adaptive") body.thinking = { type: "enabled" };
+    if (!body.reasoning_effort && thinking?.type !== "disabled") {
+      body.reasoning_effort = selected === "minimal" ? "low" : selected === "medium" || selected === "xhigh" ? "high" : selected || effort;
     }
-    if (!body.reasoning_effort) body.reasoning_effort = effort;
-  } else if (candidate.provider === "deepseek") {
-    delete body.output_config;
-    if (!body.thinking) body.thinking = { type: "enabled" };
-    if (!body.reasoning_effort) body.reasoning_effort = effort;
   } else if (candidate.provider === "commandcode" || candidate.provider === "ollama") {
     // Command Code / Ollama Cloud 的 Anthropic 透传不接受 OpenCode 专用字段。
     delete body.output_config;
@@ -310,6 +305,7 @@ export async function handleProviderRequest(opts: {
       if (!account) break;
       tried.add(account.id);
       attempted.push(account.id);
+    const attemptStarted = Date.now();
 
       let body: string;
       let commandStream = false;
@@ -367,6 +363,8 @@ export async function handleProviderRequest(opts: {
                 if (logId != null) updateRequestTokens(logId, u);
               },
               true,
+              () => { if (logId != null) updateRequestDuration(logId, Date.now() - started); },
+        (first, last) => { if (logId != null) updateRequestContentTiming(logId, started, first, last, attempted.length > 1 ? attemptStarted - started : 0); },
             );
             logId = log(200, account.id, requestedModel, null, { provider: "commandcode" });
             return new Response(tapped, {
@@ -378,19 +376,21 @@ export async function handleProviderRequest(opts: {
           try {
             const j = JSON.parse(text) as unknown;
             const usage = parseTokenUsage(j);
-            log(200, account.id, requestedModel, null, {
+            const completedLogId = log(200, account.id, requestedModel, null, {
               provider: "commandcode",
               ...(usage
                 ? {
                     inputTokens: usage.input,
                     outputTokens: usage.output,
                     cacheReadTokens: usage.cacheRead,
+                    cacheReadKnown: usage.cacheReadKnown,
                     cacheWriteTokens: usage.cacheWrite,
                     totalTokens: usage.total,
                     tokenEstimated: usage.estimated ?? false,
                   }
                 : {}),
             });
+            if (completedLogId != null) updateRequestDuration(completedLogId, Date.now() - started);
             return json(200, translateChatCompletion(j, requestedModel));
           } catch {
             log(502, account.id, null, "invalid JSON from Command Code");
@@ -405,6 +405,8 @@ export async function handleProviderRequest(opts: {
                 if (logId != null) updateRequestTokens(logId, u);
               },
               false,
+              () => { if (logId != null) updateRequestDuration(logId, Date.now() - started); },
+        (first, last) => { if (logId != null) updateRequestContentTiming(logId, started, first, last, attempted.length > 1 ? attemptStarted - started : 0); },
             )
           : null;
         const out = new Response(tapped, {

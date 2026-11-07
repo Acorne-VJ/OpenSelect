@@ -229,7 +229,7 @@ export async function listZenModels(): Promise<ZenModel[]> {
   if (zenModelCache && now - zenCacheTime < ZEN_CACHE_TTL) return zenModelCache;
 
   try {
-    const r = await fetch(ZEN_CATALOG_URL);
+    const r = await fetch(ZEN_CATALOG_URL, { signal: AbortSignal.timeout(3000) });
     if (!r.ok) throw new Error(`zen catalog ${r.status}`);
     const data = await r.json() as ModelsResp;
     // 过滤免费模型（与 proxy 的 ZEN_MODELS 保持一致）

@@ -8,7 +8,7 @@ import { join } from "node:path";
 // isolate HOME before importing modules that capture it
 process.env.HOME = mkdtempSync(join(tmpdir(), "openselect-home-remote-"));
 
-const { createBackup, fetchBackupsFromRemote, pushBackupToRemote, validateRemote, verifyBackup } = await import("../src/backup");
+const { createBackup, fetchBackupsFromRemote, pushBackupToRemote, scheduledBackupPushArgs, validateRemote, verifyBackup } = await import("../src/backup");
 const { xmlEscape } = await import("../src/util");
 const { migrateSchema } = await import("../src/db");
 
@@ -47,6 +47,42 @@ function gitShowBin(remote: string, ref: string): Buffer {
 }
 
 describe("备份私有 remote（git 推送/拉取）", () => {
+  test("定时加密参数与缺口令时拒绝降级到明文", () => {
+    const home = mkdtempSync(join(tmpdir(), "openselect-encrypted-schedule-"));
+    mkdirp(join(home, ".openselect"));
+    const configPath = join(home, ".openselect", "config.json");
+    writeFileSync(configPath, JSON.stringify({ version: 1, accounts: [] }), { mode: 0o600 });
+    const remote = makeBareRepo();
+    const env: NodeJS.ProcessEnv = { ...process.env, HOME: home };
+    delete env.OPENSELECT_BACKUP_PASSPHRASE;
+    const cli = join(process.cwd(), "src", "cli.ts");
+    const configure = spawnSync(process.execPath, [cli, "backup", "--remote", remote, "--encrypt"], { env, encoding: "utf8" });
+    expect(configure.status).toBe(0);
+    const config = JSON.parse(readFileSync(configPath, "utf8"));
+    expect(config.backup).toMatchObject({ remote, encryptRemote: true });
+    const args = scheduledBackupPushArgs(config.backup.remote, config.backup.encryptRemote);
+    expect(args).toEqual(["--push", remote, "--encrypt", "--yes"]);
+    expect(scheduledBackupPushArgs(null, true)).toEqual([]);
+    const preserve = spawnSync(process.execPath, [cli, "backup", "--remote", remote], { env, encoding: "utf8" });
+    expect(preserve.status).toBe(0);
+    expect(JSON.parse(readFileSync(configPath, "utf8")).backup.encryptRemote).toBe(true);
+    const invalid = spawnSync(process.execPath, [cli, "backup", "--remote", remote, "--encrypt=typo"], { env, encoding: "utf8" });
+    expect(invalid.status).not.toBe(0);
+    expect(JSON.parse(readFileSync(configPath, "utf8")).backup.encryptRemote).toBe(true);
+    // 配置启用加密后，即使调用者忘记 --encrypt 也不能明文推送。
+    const push = spawnSync(process.execPath, [cli, "backup", "--push", remote, "--yes"], { env, encoding: "utf8" });
+    expect(push.status).not.toBe(0);
+    expect(push.stderr).toContain("OPENSELECT_BACKUP_PASSPHRASE");
+    const branches = spawnSync("git", ["--git-dir", remote, "branch", "--list"], { encoding: "utf8" });
+    expect(branches.stdout.trim()).toBe("");
+    const disable = spawnSync(process.execPath, [cli, "backup", "--remote", remote, "--encrypt=false"], { env, encoding: "utf8" });
+    expect(disable.status).toBe(0);
+    expect(JSON.parse(readFileSync(configPath, "utf8")).backup.encryptRemote).toBe(false);
+    expect(disable.stdout).toContain("明文");
+    const badPush = spawnSync(process.execPath, [cli, "backup", "--push", remote, "--encrypt=typo", "--yes"], { env, encoding: "utf8" });
+    expect(badPush.status).not.toBe(0);
+    expect(spawnSync("git", ["--git-dir", remote, "branch", "--list"], { encoding: "utf8" }).stdout.trim()).toBe("");
+  });
   test("--push：归档与 sidecar 进入远端分支；--fetch 拉回本机并通过 SHA-256 校验", async () => {
     const env = makeEnv();
     const remote = makeBareRepo();

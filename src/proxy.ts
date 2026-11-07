@@ -7,12 +7,13 @@ import {
   stripVersionPrefix,
   type Catalog,
 } from "./catalog";
-import { logRequest, updateRequestTokens } from "./db";
+import { logRequest, updateRequestContentTiming, updateRequestDuration, updateRequestTokens } from "./db";
 import { eligibility, pickAccount, type PolicyDecision } from "./policy";
 import { parseTokenUsage, tapUsageStream } from "./tokens";
 import { deepSeekFallbackRoute, resolveProviderRoute } from "./providers";
 import { handleProviderRequest } from "./provider_proxy";
 import { codingAutoOrder } from "./coding_auto";
+import { capabilityRejections, requestRequirements, ROUTE_CAPABILITIES, supportsRequirements } from "./route_capabilities";
 import { handleDeepSeekTool } from "./tools";
 import type { Runtime } from "./state";
 import {
@@ -274,6 +275,7 @@ async function modelsResponse(catalog: Catalog, id: string | null): Promise<Resp
     display_name: info.name,
     family: info.family,
     free: info.free ?? false,
+    ...("inputModalities" in info && info.inputModalities ? { input_modalities: info.inputModalities } : {}),
   });
   if (id) {
     const info = catalog.models[id];
@@ -630,8 +632,23 @@ export async function handleProxyRequest(rt: Runtime, req: Request, opts?: { dis
   // Only coding-auto uses the user-configured provider sequence. A missing setting
   // preserves the historic chain; an invalid explicit setting fails closed.
   if (model === "coding-auto" && (isMessages || isCountTokens)) {
-    const order = codingAutoOrder(rt.config.policy.codingAutoOrder);
-    if (!order.length) return jsonResponse(503, anthropicError("openselect_route_config", "coding-auto 线路配置无效或为空"));
+    const configuredOrder = codingAutoOrder(rt.config.policy.codingAutoOrder);
+    if (!configuredOrder.length) return jsonResponse(503, anthropicError("openselect_route_config", "coding-auto 线路配置无效或为空"));
+    let requestBody: Record<string, unknown>;
+    try { requestBody = JSON.parse(new TextDecoder().decode(bodyBuf!)) as Record<string, unknown>; }
+    catch { return jsonResponse(400, anthropicError("invalid_request_error", "request body must be JSON")); }
+    let requirements: ReturnType<typeof requestRequirements>;
+    try { requirements = requestRequirements(requestBody, req.headers.get("x-openselect-context-window")); }
+    catch (error) { return jsonResponse(400, anthropicError("invalid_request_error", String(error))); }
+    const order = configuredOrder.filter((step) => supportsRequirements(ROUTE_CAPABILITIES[step], requirements));
+    if (!order.length) {
+      const details = configuredOrder.map((step) => step + ": " + capabilityRejections(ROUTE_CAPABILITIES[step], requirements).join("、")).join("；");
+      const error = "已选 coding-auto 线路均不满足请求能力：" + details + "。实际上下文占用及供应商容量仍须上游验证。";
+      logRequest({ ts: started, sessionId: req.headers.get("x-opencode-session") ?? req.headers.get("x-session-id"),
+        model: "coding-auto", family, accountId: "", status: 400, attempts: 0, latencyMs: Date.now() - started,
+        error, path: url.pathname, client: detectClient(req, url.pathname) });
+      return jsonResponse(400, anthropicError("openselect_unsupported_capability", error));
+    }
     const run = async (index: number): Promise<Response> => {
       const step = order[index]!;
       const next = index + 1 < order.length ? () => run(index + 1) : undefined;
@@ -648,7 +665,7 @@ export async function handleProxyRequest(rt: Runtime, req: Request, opts?: { dis
         headers.delete("content-length");
         headers.set("x-openselect-no-deepseek-fallback", "1");
         const child = new Request(req.url, { method: req.method, headers, body: rewriteBodyModel(bodyBuf, "deepseek-v4.1-flash") });
-        const response = await handleProxyRequest(rt, child, { disableFreeRouting: rt.config.policy.codingAutoOrder !== undefined, originalRequestedModel: "coding-auto" });
+        const response = await handleProxyRequest(rt, child, { disableFreeRouting: rt.config.policy.codingAutoOrder !== undefined || requirements.imageSources.length > 0 || requirements.thinking !== "unspecified", originalRequestedModel: "coding-auto" });
         if (!next || response.status < 400 || response.status === 400 || response.status === 413) return response;
         try { await response.body?.cancel(); } catch { /* best effort */ }
         return next();
@@ -665,7 +682,15 @@ export async function handleProxyRequest(rt: Runtime, req: Request, opts?: { dis
       }
       return handleProviderRequest({ req, url, bodyBuf, requestedModel: model!, route: { ...route, strict: false }, rt, fallback: next, allowFallbackOnly: step === "deepseek" });
     };
-    return run(0);
+    const response = await run(0);
+    const skipped = configuredOrder.filter((step) => !order.includes(step));
+    if (!skipped.length) return response;
+    const headers = new Headers(response.headers);
+    // Report capability filtering even when another candidate ultimately succeeds.
+    headers.set("x-openselect-skipped-routes", encodeURIComponent(JSON.stringify(skipped.map((step) => ({
+      route: step, reasons: capabilityRejections(ROUTE_CAPABILITIES[step], requirements),
+    })))));
+    return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
   }
 
   // 直连供应商与 coding-auto：Anthropic Messages 原生透传。
@@ -814,6 +839,8 @@ export async function handleProxyRequest(rt: Runtime, req: Request, opts?: { dis
         return jsonResponse(400, anthropicError("invalid_request_error", "request body must be JSON"));
       }
       const tr = translateAnthropicRequest(parsed, model!);
+      // OpenCode Go supports OpenAI usage in the final streaming chunk.
+      if (tr.stream && model === "deepseek-v4.1-flash") tr.body.stream_options = { include_usage: true };
       const bytes = new TextEncoder().encode(JSON.stringify(tr.body));
       upstreamFamily = "openai";
       upstreamPath = "/chat/completions";
@@ -1079,6 +1106,7 @@ export async function handleProxyRequest(rt: Runtime, req: Request, opts?: { dis
 
     if (!isFreeAttempt) upstreamAttempts++; // 免费尝试不消耗付费重试预算
     attempted.push(decision.accountId);
+    const attemptStarted = Date.now();
 
     if (attempted.length === 1 && priorSessionAccount && priorSessionAccount !== decision.accountId) {
       rt.logSwitch(
@@ -1097,6 +1125,7 @@ export async function handleProxyRequest(rt: Runtime, req: Request, opts?: { dis
     for (const [k, v] of req.headers.entries()) {
       const lk = k.toLowerCase();
       if (REQ_STRIP.has(lk)) continue;
+      if (lk === "x-openselect-context-window") continue;
       if (xlate && lk.startsWith("anthropic-")) continue; // 翻译模式：Anthropic 专属头不上行
       headers.set(k, v);
     }
@@ -1358,7 +1387,7 @@ export async function handleProxyRequest(rt: Runtime, req: Request, opts?: { dis
       rt.touch(account.id);
       rt.bindSession(sessionId, account.id);
       rt.preferredAccountId = account.id;
-      logRequest({
+      const completedLogId = logRequest({
         ts: started,
         sessionId,
         model: opts?.originalRequestedModel ?? requestedModel,
@@ -1377,12 +1406,14 @@ export async function handleProxyRequest(rt: Runtime, req: Request, opts?: { dis
               inputTokens: usage.input,
               outputTokens: usage.output,
               cacheReadTokens: usage.cacheRead,
+              cacheReadKnown: usage.cacheReadKnown,
               cacheWriteTokens: usage.cacheWrite,
               totalTokens: usage.total,
               tokenEstimated: usage.estimated ?? false,
             }
           : {}),
       });
+      if (completedLogId != null) updateRequestDuration(completedLogId, Date.now() - started);
       return jsonResponse(res.status, body);
     }
 
@@ -1435,17 +1466,25 @@ export async function handleProxyRequest(rt: Runtime, req: Request, opts?: { dis
           void reader.cancel(reason).catch(() => {});
         },
       });
+      let upstreamUsageObserved = false;
+      const upstreamStream = xlate ? tapUsageStream(stream, (u) => {
+        if (u.inputKnown && u.outputKnown) {
+          upstreamUsageObserved = true;
+          if (logId != null) updateRequestTokens(logId, u);
+        }
+      }) : stream;
       const finalStream = xlate
-        ? chatSseToAnthropicStream(stream, { model: xlate.model, inputTokens: xlate.inputTokens })
+        ? chatSseToAnthropicStream(upstreamStream, { model: xlate.model, inputTokens: xlate.inputTokens })
         : stream;
-      // 翻译路径的 usage 由本地 SSE 翻译器生成（输入/输出为估算），标记 estimated；
-      // 原生路径直接解析上游 SSE/JSON 的 usage。
+      // 翻译路径优先保存上游 usage；仅上游未完整上报时记录翻译器的本地估算。
       const tappedStream = tapUsageStream(
         finalStream,
         (u) => {
-          if (logId != null) updateRequestTokens(logId, u);
+          if (logId != null && (!xlate || !upstreamUsageObserved)) updateRequestTokens(logId, u);
         },
         Boolean(xlate),
+        () => { if (logId != null) updateRequestDuration(logId, Date.now() - started); },
+        (first, last) => { if (logId != null) updateRequestContentTiming(logId, started, first, last, attempted.length > 1 ? attemptStarted - started : 0); },
       );
       const respHeaders = sanitizeResponseHeaders(res.headers);
       if (xlate) respHeaders.set("content-type", "text/event-stream; charset=utf-8");

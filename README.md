@@ -16,6 +16,14 @@ Built with Bun and TypeScript. The proxy has no npm runtime dependencies; the da
 - **OpenCode integration:** connect or restore OpenCode configuration with reversible `wire` and `unwire` commands.
 - **Backups:** create local backups, verify signatures, and optionally use encrypted remote backups.
 
+### Latest improvements
+
+- Copy launch commands for Pi, OpenCode, Hermes, and Claude Code from the Routes page. Pi declares image input, Thinking support, and a 1M context window.
+- `coding-auto` filters selected routes for compatible image sources and explicit Thinking requirements. The Routes page lists capabilities; actual prompt size remains subject to upstream validation.
+- Token analytics distinguish end-to-end speed, time to first content, streaming output speed, and measured retry time. Charts expose values on hover and keyboard focus. Older unmeasured records remain unknown. Retry timing currently covers the active handler chain; it does not yet combine all provider fallback hops.
+- Statistics share a database snapshot across aggregate views, invalidate cached results on writes, and group speed trends by local calendar boundaries.
+- Scheduled remote backups support persistent encryption settings. Configure a local passphrase before enabling them; a missing passphrase prevents encrypted uploads instead of falling back to plaintext. Enabling encryption does not remove earlier remote backups.
+
 For the detailed feature reference, see [FEATURES.md](FEATURES.md) (Chinese).
 
 ## Screenshots

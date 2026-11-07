@@ -16,6 +16,10 @@ export interface TokenUsage {
   total: number;
   /** 流式翻译路径的 usage 是本地估算值，不是上游原始 usage。 */
   estimated?: boolean;
+  /** Whether the source actually reported a cache-read count. */
+  cacheReadKnown?: boolean;
+  inputKnown?: boolean;
+  outputKnown?: boolean;
 }
 
 function asRecord(v: unknown): Record<string, unknown> | null {
@@ -78,12 +82,13 @@ export function parseTokenUsage(value: unknown): TokenUsage | null {
     usage.eval_count,
     root.eval_count,
   );
-  const cacheRead = firstNum(
+  const reportedCacheRead = firstNum(
     usage.cache_read_input_tokens,
     usage.cached_tokens,
     details.cached_tokens,
     usage.cachedContentTokenCount,
-  ) ?? 0;
+  );
+  const cacheRead = reportedCacheRead ?? 0;
   const cacheWrite = firstNum(usage.cache_creation_input_tokens, usage.cache_write_tokens) ?? 0;
   const reportedTotal = firstNum(usage.total_tokens, usage.totalTokenCount);
 
@@ -95,7 +100,9 @@ export function parseTokenUsage(value: unknown): TokenUsage | null {
     : Math.max(0, (rawInput ?? Math.max(0, (reportedTotal ?? 0) - output)) - cacheRead);
   const total = input + cacheRead + cacheWrite + output;
   if (total <= 0 && rawInput == null && rawOutput == null) return null;
-  return { input, output, cacheRead, cacheWrite, total, estimated: false };
+  return { input, output, cacheRead, cacheWrite, total, estimated: false, cacheReadKnown: reportedCacheRead != null,
+    inputKnown: rawInput != null || (reportedTotal != null && rawOutput != null),
+    outputKnown: rawOutput != null || (reportedTotal != null && rawInput != null) };
 }
 
 export function mergeTokenUsage(a: TokenUsage | null, b: TokenUsage | null): TokenUsage | null {
@@ -112,6 +119,9 @@ export function mergeTokenUsage(a: TokenUsage | null, b: TokenUsage | null): Tok
     cacheWrite,
     total: input + cacheRead + cacheWrite + output,
     estimated: Boolean(a.estimated || b.estimated),
+    cacheReadKnown: Boolean(a.cacheReadKnown || b.cacheReadKnown),
+    inputKnown: Boolean(a.inputKnown || b.inputKnown),
+    outputKnown: Boolean(a.outputKnown || b.outputKnown),
   };
 }
 
@@ -131,10 +141,26 @@ function parseSseLine(line: string): TokenUsage | null {
  * 透明 tap：原样转发字节，同时解析 SSE usage / 非流式 JSON usage。
  * onDone 在流结束（或取消）时调用一次；没有 usage 时不调用。
  */
+export function hasGeneratedContent(event: any): boolean {
+  const nonempty = (v: unknown) => typeof v === "string" && v.length > 0;
+  const delta = event?.delta;
+  if (["text_delta", "thinking_delta", "input_json_delta"].includes(delta?.type)) {
+    return nonempty(delta.text) || nonempty(delta.thinking) || nonempty(delta.partial_json);
+  }
+  if (typeof event?.type === "string" && /(?:output_text|reasoning_summary_text|function_call_arguments)\.delta$/.test(event.type)) return nonempty(delta);
+  return Array.isArray(event?.choices) && event.choices.some((c: any) =>
+    nonempty(c.delta?.content) || nonempty(c.delta?.reasoning_content) ||
+    c.delta?.tool_calls?.some((t: any) => nonempty(t.function?.arguments))) ||
+    Array.isArray(event?.candidates) && event.candidates.some((c: any) => c.content?.parts?.some((p: any) => nonempty(p.text) || p.functionCall)) ||
+    event?.done === false && (nonempty(event.message?.content) || nonempty(event.message?.thinking) || nonempty(event.response));
+}
+
 export function tapUsageStream(
   source: ReadableStream<Uint8Array>,
   onDone: (usage: TokenUsage) => void,
   estimated = false,
+  onComplete?: () => void,
+  onContentTiming?: (first: number, last: number) => void,
 ): ReadableStream<Uint8Array> {
   const decoder = new TextDecoder();
   const reader = source.getReader();
@@ -142,10 +168,22 @@ export function tapUsageStream(
   let raw = "";
   let usage: TokenUsage | null = null;
   let finished = false;
+  let firstContent: number | null = null;
+  let lastContent: number | null = null;
 
   const feed = (line: string): void => {
     const u = parseSseLine(line);
     if (u) usage = mergeTokenUsage(usage, u);
+    if (line.trimStart().startsWith("data:")) {
+      try {
+        const event = JSON.parse(line.trimStart().slice(5));
+        if (hasGeneratedContent(event)) {
+          const now = Date.now();
+          firstContent ??= now;
+          lastContent = now;
+        }
+      } catch { /* metadata, DONE, or malformed event */ }
+    }
   };
 
   const flush = (): void => {
@@ -171,6 +209,8 @@ export function tapUsageStream(
         const { done, value } = await reader.read();
         if (done) {
           flush();
+          if (firstContent != null && lastContent != null) onContentTiming?.(firstContent, lastContent);
+          onComplete?.();
           controller.close();
           return;
         }

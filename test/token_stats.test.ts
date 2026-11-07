@@ -10,6 +10,8 @@ const {
   getDb,
   logRequest,
   updateRequestTokens,
+  updateRequestDuration,
+  requestSpeedSamples,
   tokenTotals,
   tokenStatsByProvider,
   tokenStatsByModel,
@@ -18,6 +20,33 @@ const {
 } = await import("../src/db");
 
 describe("token 统计 SQL", () => {
+  test("输出速度按完整耗时加权，排除历史、估算及失败请求", () => {
+    const now = Date.now() + 800 * 24 * 3600_000;
+    const add = (outputTokens: number, tokenEstimated: boolean, status = 200) => logRequest({
+      ts: now, sessionId: null, model: "speed-model", family: "openai",
+      accountId: "speed-account", provider: "opencode-go", status, attempts: 1,
+      latencyMs: 100, error: null, path: "/v1/messages", outputTokens,
+      inputTokens: 1, totalTokens: outputTokens + 1, tokenEstimated,
+    })!;
+    try {
+      updateRequestDuration(add(100, false), 2000);
+      updateRequestDuration(add(100, false), 3000);
+      updateRequestDuration(add(900, true), 1000);
+      updateRequestDuration(add(900, false, 500), 1000);
+      add(900, false); // historical request without completed duration
+      const totals = tokenTotals(now, now + 1);
+      expect(totals.speedRequests).toBe(2);
+      expect(totals.outputTokensPerSecond).toBe(40);
+      const samples = requestSpeedSamples(now, now + 1);
+      expect(samples.length).toBe(2);
+      expect(samples[0]?.waitMs).toBe(100);
+      const model = tokenStatsByModel(now, now + 1).find((m) => m.model === "speed-model");
+      expect(model?.speedRequests).toBe(2);
+      expect(model?.outputTokensPerSecond).toBe(40);
+    } finally {
+      getDb().query("DELETE FROM requests WHERE ts = ?").run(now);
+    }
+  });
   test("按供应商/模型/账号/时间聚合，旧行 token 为空不参与", () => {
     // 使用未来时间窗，避免与其它测试文件共享的 SQLite 台账互相污染。
     const now = Date.now() + 400 * 24 * 3600_000;

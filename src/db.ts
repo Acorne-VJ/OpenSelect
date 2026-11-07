@@ -118,6 +118,11 @@ export function migrateSchema(d: Database): void {
     ["cache_write_tokens", "INTEGER"],
     ["total_tokens", "INTEGER"],
     ["token_estimated", "INTEGER"],
+    ["cache_read_known", "INTEGER"],
+    ["duration_ms", "INTEGER"],
+    ["first_content_ms", "INTEGER"],
+    ["generation_ms", "INTEGER"],
+    ["retry_ms", "INTEGER"],
   ] as const) {
     if (!cols.some((c) => c.name === name)) d.exec(`ALTER TABLE requests ADD COLUMN ${name} ${type}`);
   }
@@ -240,8 +245,8 @@ export function logRequest(e: RequestLogEntry): number | null {
       .query(
         `INSERT INTO requests
           (ts, session_id, model, served_model, family, account_id, provider, status, attempts, latency_ms, error, path, client,
-           input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, total_tokens, token_estimated)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19)`,
+           input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, total_tokens, token_estimated, cache_read_known)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20)`,
       )
       .run(
         e.ts,
@@ -263,6 +268,7 @@ export function logRequest(e: RequestLogEntry): number | null {
         e.cacheWriteTokens ?? null,
         e.totalTokens ?? null,
         e.tokenEstimated == null ? null : e.tokenEstimated ? 1 : 0,
+        e.cacheReadKnown == null ? null : e.cacheReadKnown ? 1 : 0,
       );
     const id = Number(info.lastInsertRowid);
     return Number.isFinite(id) ? id : null;
@@ -280,7 +286,7 @@ export function updateRequestTokens(id: number, u: TokenUsage): void {
       .query(
         `UPDATE requests
          SET input_tokens=?2, output_tokens=?3, cache_read_tokens=?4, cache_write_tokens=?5,
-             total_tokens=?6, token_estimated=?7
+             total_tokens=?6, token_estimated=?7, cache_read_known=?8
          WHERE id=?1`,
       )
       .run(
@@ -291,10 +297,29 @@ export function updateRequestTokens(id: number, u: TokenUsage): void {
         u.cacheWrite,
         u.total,
         u.estimated ? 1 : 0,
+        u.cacheReadKnown ? 1 : 0,
       );
   } catch (err) {
     console.error(`[openselect] updateRequestTokens failed: ${String(err)}`);
   }
+}
+
+/** 只在响应完整结束时记录耗时，历史记录保持未知。 */
+export function updateRequestDuration(id: number, durationMs: number): void {
+  try {
+    if (Number.isFinite(durationMs) && durationMs > 0) {
+      getDb().query("UPDATE requests SET duration_ms = ?2 WHERE id = ?1").run(id, Math.ceil(durationMs));
+    }
+  } catch (err) {
+    console.error(`[openselect] updateRequestDuration failed: ${String(err)}`);
+  }
+}
+
+export function updateRequestContentTiming(id: number, started: number, first: number, last: number, retryMs: number | null = null): void {
+  try {
+    if (first >= started && last >= first) getDb().query("UPDATE requests SET first_content_ms=?2, generation_ms=?3, retry_ms=?4 WHERE id=?1")
+      .run(id, first - started, last > first ? last - first : null, retryMs);
+  } catch (err) { console.error(`[openselect] updateRequestContentTiming failed: ${String(err)}`); }
 }
 
 export function recentRequests(limit = 50): Array<RequestLogEntry & { id: number }> {
@@ -580,7 +605,13 @@ export interface TokenAggregate {
   estimatedRequests: number;
   inputTokens: number;
   outputTokens: number;
+  /** 仅完整响应且上游上报输出用量的样本。 */
+  outputTokensPerSecond: number | null;
+  speedRequests: number;
   cacheReadTokens: number;
+  cacheKnownRequests: number;
+  cacheKnownInputTokens: number;
+  cacheKnownReadTokens: number;
   cacheWriteTokens: number;
   totalTokens: number;
   errors: number;
@@ -617,7 +648,13 @@ const TOKEN_AGG_SQL = `COUNT(*) AS requests,
   SUM(CASE WHEN token_estimated = 1 THEN 1 ELSE 0 END) AS estimated_requests,
   SUM(COALESCE(input_tokens, 0)) AS input_tokens,
   SUM(COALESCE(output_tokens, 0)) AS output_tokens,
+  SUM(CASE WHEN duration_ms > 0 AND output_tokens > 0 AND token_estimated = 0 AND status >= 200 AND status < 300 THEN output_tokens ELSE 0 END) AS speed_output_tokens,
+  SUM(CASE WHEN duration_ms > 0 AND output_tokens > 0 AND token_estimated = 0 AND status >= 200 AND status < 300 THEN duration_ms ELSE 0 END) AS speed_duration_ms,
+  SUM(CASE WHEN duration_ms > 0 AND output_tokens > 0 AND token_estimated = 0 AND status >= 200 AND status < 300 THEN 1 ELSE 0 END) AS speed_requests,
   SUM(COALESCE(cache_read_tokens, 0)) AS cache_read_tokens,
+  SUM(CASE WHEN cache_read_known = 1 AND COALESCE(token_estimated, 0) = 0 THEN 1 ELSE 0 END) AS cache_known_requests,
+  SUM(CASE WHEN cache_read_known = 1 AND COALESCE(token_estimated, 0) = 0 THEN COALESCE(input_tokens, 0) ELSE 0 END) AS cache_known_input_tokens,
+  SUM(CASE WHEN cache_read_known = 1 AND COALESCE(token_estimated, 0) = 0 THEN COALESCE(cache_read_tokens, 0) ELSE 0 END) AS cache_known_read_tokens,
   SUM(COALESCE(cache_write_tokens, 0)) AS cache_write_tokens,
   SUM(COALESCE(total_tokens, 0)) AS total_tokens,
   SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END) AS errors,
@@ -630,7 +667,13 @@ interface TokenAggRow {
   estimated_requests: number | null;
   input_tokens: number | null;
   output_tokens: number | null;
+  speed_output_tokens: number | null;
+  speed_duration_ms: number | null;
+  speed_requests: number | null;
   cache_read_tokens: number | null;
+  cache_known_requests: number | null;
+  cache_known_input_tokens: number | null;
+  cache_known_read_tokens: number | null;
   cache_write_tokens: number | null;
   total_tokens: number | null;
   errors: number | null;
@@ -645,13 +688,31 @@ function mapTokenAgg(r: TokenAggRow): TokenAggregate {
     estimatedRequests: Number(r.estimated_requests ?? 0),
     inputTokens: Number(r.input_tokens ?? 0),
     outputTokens: Number(r.output_tokens ?? 0),
+    outputTokensPerSecond: r.speed_duration_ms ? Number(r.speed_output_tokens ?? 0) * 1000 / r.speed_duration_ms : null,
+    speedRequests: Number(r.speed_requests ?? 0),
     cacheReadTokens: Number(r.cache_read_tokens ?? 0),
+    cacheKnownRequests: Number(r.cache_known_requests ?? 0),
+    cacheKnownInputTokens: Number(r.cache_known_input_tokens ?? 0),
+    cacheKnownReadTokens: Number(r.cache_known_read_tokens ?? 0),
     cacheWriteTokens: Number(r.cache_write_tokens ?? 0),
     totalTokens: Number(r.total_tokens ?? 0),
     errors: Number(r.errors ?? 0),
     avgLatencyMs: Number(r.avg_latency ?? 0),
     lastTs: Number(r.last_ts ?? 0),
   };
+}
+
+/** 仅完整且真实上报用量的成功请求；不读取请求正文或账号信息。 */
+export function requestSpeedSamples(since: number, until: number): import("./speed_analysis").SpeedSample[] {
+  return getDb().query(`SELECT ts, ${EFFECTIVE_MODEL_SQL} AS model,
+    COALESCE(NULLIF(provider, ''), 'unknown') AS provider,
+    output_tokens AS outputTokens, duration_ms AS durationMs,
+    first_content_ms AS firstContentMs, generation_ms AS generationMs, retry_ms AS retryMs,
+    CASE WHEN latency_ms >= 0 AND latency_ms <= duration_ms THEN latency_ms ELSE NULL END AS waitMs,
+    COALESCE(attempts, 1) AS attempts
+    FROM requests WHERE ts >= ?1 AND ts < ?2 AND duration_ms > 0
+    AND output_tokens > 0 AND token_estimated = 0 AND status >= 200 AND status < 300`)
+    .all(since, until) as import("./speed_analysis").SpeedSample[];
 }
 
 export function tokenTotals(since: number, until: number): TokenTotals {

@@ -178,6 +178,7 @@ export function providerCatalogModels(): ModelInfo[] {
     free: false,
     cost: PROVIDER_MODEL_COSTS[id] ?? { input: 0, output: 0 },
     provider: m.provider,
+    ...(["zai/glm-5.3-flash", "minimax/MiniMax-M3.1-Flash", "deepseek/deepseek-flash"].includes(id) ? { inputModalities: ["text", "image"] as Array<"text" | "image"> } : {}),
     upstreamModel: m.model,
     defaultEffort: m.effort,
   }));
@@ -188,6 +189,7 @@ export function providerCatalogModels(): ModelInfo[] {
     free: false,
     cost: { input: 0, output: 0 },
     provider: "auto",
+    inputModalities: ["text", "image"],
     defaultEffort: "max",
   });
   return out;

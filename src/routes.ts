@@ -15,6 +15,7 @@ import {
 } from "./time_pricing";
 import { UI_CSS, navHtml } from "./ui";
 import { codingAutoOrder, type CodingAutoStep } from "./coding_auto";
+import { ROUTE_CAPABILITIES } from "./route_capabilities";
 
 const PROVIDER_INTEGRATION: Record<string, string> = {
   opencode: "opencode-go",
@@ -195,6 +196,7 @@ export interface RouteAdvice {
   now: number;
   proxyPort: number;
   codingAutoOrder: CodingAutoStep[];
+  routeCapabilities: typeof ROUTE_CAPABILITIES;
   timezone: string;
   base: TimePricingData["base"];
   scoring: ScoringConfig;
@@ -409,6 +411,7 @@ export async function buildRouteAdvice(rt: Runtime): Promise<RouteAdvice> {
     now: now.getTime(),
     proxyPort: rt.config.proxy.port,
     codingAutoOrder: codingAutoOrder(rt.config.policy.codingAutoOrder),
+    routeCapabilities: ROUTE_CAPABILITIES,
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     base: data.base,
     scoring,
@@ -453,6 +456,8 @@ export function routesPage(): string {
   .collect { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
   .algo { line-height:1.8; color:var(--muted); font-size:12.5px; }
   .algo b { color:var(--text); }
+  #commandCard .fr label { flex-basis:150px; }
+  #commandCard .fr code { flex:1 1 300px; min-width:0; overflow-wrap:anywhere; }
   @media (max-width: 1000px) { .route-grid { grid-template-columns:1fr; } }
 </style>
 </head>
@@ -470,11 +475,17 @@ ${navHtml("routes")}
     <p class="muted" id="orderHelp"></p>
     <div id="orderRows"></div>
     <div class="btnrow"><button type="button" class="btn primary" id="orderSave"></button><span class="msg" id="orderMsg" role="status"></span></div>
+    <h3 id="capabilityTitle"></h3>
+    <p class="muted" id="capabilityHelp"></p>
+    <div class="tablewrap"><table><thead id="capabilityHead"></thead><tbody id="capabilityRows"></tbody></table></div>
   </div>
-  <div class="card" style="margin-top:14px">
-    <h2 style="margin-top:0">Claude Code 启动命令</h2>
-    <p class="muted" id="commandHelp">仅包含本地代理占位凭据；auto-cli 命令只在当前终端定义别名，不修改配置文件。</p>
-    <div class="fr"><label>auto-cli</label><code id="autoCommand"></code><button type="button" class="btn sm" data-copy-command="autoCommand">复制</button></div>
+  <div class="card" id="commandCard" style="margin-top:14px">
+    <h2 style="margin-top:0" id="commandTitle">客户端启动命令</h2>
+    <p class="muted" id="commandHelp"></p>
+    <div class="fr"><label>Claude Code · auto-cli</label><code id="autoCommand"></code><button type="button" class="btn sm" data-copy-command="autoCommand">复制</button></div>
+    <div class="fr"><label>Pi · pi-auto</label><code id="piCommand"></code><button type="button" class="btn sm" data-copy-command="piCommand">复制</button></div>
+    <div class="fr"><label>OpenCode · opencode-auto</label><code id="opencodeCommand"></code><button type="button" class="btn sm" data-copy-command="opencodeCommand">复制</button></div>
+    <div class="fr"><label>Hermes · hermes-auto</label><code id="hermesCommand"></code><button type="button" class="btn sm" data-copy-command="hermesCommand">复制</button></div>
     <div class="fr"><label>DeepSeek</label><code id="deepseekCommand"></code><button type="button" class="btn sm" data-copy-command="deepseekCommand">复制</button></div>
     <p class="muted" id="commandNotice" role="status"></p>
   </div>
@@ -564,10 +575,23 @@ function renderOrder(){
   document.getElementById("orderRows").innerHTML=orderRows.map(function(row,index){return '<div class="fr"><input type="checkbox" data-order-toggle="'+row.id+'"'+(row.enabled?' checked':'')+' aria-label="'+esc(osT('启用 ','Enable ')+orderLabels[row.id])+'"><span>'+(index+1)+'. '+esc(orderLabels[row.id])+'</span><button type="button" class="btn sm" data-order-move="'+row.id+'" data-dir="-1" aria-label="'+esc(osT('上移 ','Move up ')+orderLabels[row.id])+'"'+(index===0?' disabled':'')+'>↑</button><button type="button" class="btn sm" data-order-move="'+row.id+'" data-dir="1" aria-label="'+esc(osT('下移 ','Move down ')+orderLabels[row.id])+'"'+(index===orderRows.length-1?' disabled':'')+'>↓</button></div>';}).join('');
 }
 function render(d){
+  document.getElementById("capabilityTitle").textContent=osT("请求能力检查","Request capability checks");
+  document.getElementById("capabilityHelp").textContent=osT("coding-auto 会跳过不满足图片或 Thinking 要求的线路。上下文列是容量元数据，不是本次请求的实际 token 数；可用 x-openselect-context-window 请求头指定所需容量（例如 1000000），或使用 coding-auto[1m]。实际占用仍由上游校验，不会删除图片或截断消息。未验证的图片来源会跳过。","coding-auto skips routes incompatible with image or Thinking requirements. Context is capacity metadata, not the actual prompt token count. Set x-openselect-context-window (e.g. 1000000), or use coding-auto[1m], to require a capacity. The upstream validates actual usage; images and messages are never removed to make a request fit. Unverified image sources are skipped.");
+  document.getElementById("capabilityHead").innerHTML='<tr>'+[osT('线路','Route'),osT('图片来源','Image sources'),'Thinking',osT('关闭 Thinking','Thinking off'),osT('上下文容量','Context capacity')].map(function(s){return '<th>'+esc(s)+'</th>';}).join('')+'</tr>';
+  var caps=d.routeCapabilities||{};
+  document.getElementById("capabilityRows").innerHTML=Object.keys(caps).map(function(id){var c=caps[id];function support(v){return v===true?osT('支持','Supported'):v===false?osT('不支持','Unsupported'):osT('未验证','Unverified');}return '<tr><td title="'+esc(c.source)+'">'+esc(orderLabels[id]||id)+'</td><td>'+esc(Array.isArray(c.imageSources)?c.imageSources.join(', '):osT('未验证','Unverified'))+'</td><td>'+support(c.thinking)+'</td><td>'+support(c.thinkingDisabled)+'</td><td>'+esc(c.contextTokens==null?osT('未知','Unknown'):Number(c.contextTokens).toLocaleString())+'</td></tr>';}).join('');
   document.getElementById("hdr").textContent=osT("当前 ","Now ")+fmtT(d.now)+osT(" · 本机时区 "," · Local time zone ")+d.timezone+osT(" · 基准 "," · Baseline ")+usd(d.base.usdPerMillion)+"/M";
   var prefix="env -u ANTHROPIC_API_KEY -u OPENAI_API_KEY -u OPENAI_BASE_URL NO_PROXY=localhost,127.0.0.1 no_proxy=localhost,127.0.0.1 ANTHROPIC_BASE_URL=http://127.0.0.1:"+d.proxyPort+" ANTHROPIC_AUTH_TOKEN=openselect claude --model ";
-  document.getElementById("commandHelp").textContent=osT("仅包含本地代理占位凭据；auto-cli 命令只在当前终端定义别名，不修改配置文件。","Contains only the local proxy placeholder credential; the auto-cli alias applies to the current shell and does not modify configuration files.");
+  document.getElementById("commandTitle").textContent=osT("客户端启动命令","Client launch commands");
+  document.getElementById("commandHelp").textContent=osT("复制并粘贴命令到终端，再输入对应名称启动；命令仅在当前终端生效，使用 coding-auto 和上方已保存的线路。Pi 和 Hermes 使用 ~/.config/openselect 下独立的客户端配置及会话，不会使用原有客户端的设置和会话。OpenCode 命令适用于 v2。", "Paste a command into your terminal, then run its name. Commands last for the current shell and use coding-auto with the saved routes above. Pi and Hermes use separate client settings and sessions under ~/.config/openselect, not their existing settings and sessions. The OpenCode command requires v2.");
   document.getElementById("autoCommand").textContent="alias auto-cli='"+prefix+'"coding-auto[1m]"'+"'";
+  var base="http://127.0.0.1:"+d.proxyPort;
+  var piConfig=JSON.stringify({providers:{openselect:{baseUrl:base,api:"anthropic-messages",apiKey:"openselect",models:[{id:"coding-auto",name:"Coding Auto",contextWindow:1000000,maxTokens:32768,input:["text","image"],reasoning:true,thinkingLevelMap:{max:"max"},compat:{forceAdaptiveThinking:true,allowEmptySignature:true}}]}}});
+  var openConfig=JSON.stringify({provider:{openselect:{npm:"@ai-sdk/anthropic",name:"OpenSelect",options:{baseURL:base+"/v1",apiKey:"openselect"},models:{"coding-auto":{name:"Coding Auto",modalities:{input:["text","image"],output:["text"]},limit:{context:200000,output:8192}}}}},model:"openselect/coding-auto"});
+  var hermesConfig=JSON.stringify({model:{provider:"custom:openselect",default:"coding-auto",supports_vision:true},providers:{openselect:{api:base,api_key:"openselect",transport:"anthropic_messages",default_model:"coding-auto"}}});
+  document.getElementById("piCommand").textContent="mkdir -p \\\"$HOME/.config/openselect/pi\\\" && printf %s '"+piConfig+"' > \\\"$HOME/.config/openselect/pi/models.json\\\" && pi-auto() { PI_CODING_AGENT_DIR=\\\"$HOME/.config/openselect/pi\\\" pi --provider openselect --model coding-auto \\\"$@\\\"; }";
+  document.getElementById("opencodeCommand").textContent="opencode-auto() { OPENCODE_CONFIG_CONTENT='"+openConfig+"' opencode mini --standalone --model openselect/coding-auto \\\"$@\\\"; }";
+  document.getElementById("hermesCommand").textContent="hermes-auto() { mkdir -p \\\"$HOME/.config/openselect/hermes\\\" && printf %s '"+hermesConfig+"' > \\\"$HOME/.config/openselect/hermes/config.yaml\\\" && HERMES_HOME=\\\"$HOME/.config/openselect/hermes\\\" hermes --provider custom:openselect --model coding-auto \\\"$@\\\"; }";
   document.getElementById("deepseekCommand").textContent=prefix+"'deepseek-v4.1-flash[1m]'";
   if(!orderRows){var active=d.codingAutoOrder||[]; orderRows=active.map(function(id){return {id:id,enabled:true};}).concat(Object.keys(orderLabels).filter(function(id){return active.indexOf(id)<0;}).map(function(id){return {id:id,enabled:false};})); renderOrder();}
   var last=d.lastRequest;

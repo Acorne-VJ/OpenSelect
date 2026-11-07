@@ -27,6 +27,8 @@
  * count_tokens（openai 模型本地）：{input_tokens: ceil(JSON bytes / 4)}。
  */
 
+import { mergeTokenUsage, parseTokenUsage, type TokenUsage } from "./tokens";
+
 export interface TranslatedAnthropicRequest {
   body: Record<string, unknown>;
   stream: boolean;
@@ -135,6 +137,7 @@ export function translateAnthropicRequest(
     const toolMsgs: Array<Record<string, unknown>> = [];
     const toolImages: Array<Record<string, unknown>> = [];
     let text = "";
+    let reasoning = "";
     const flushText = (): void => {
       if (text) {
         parts.push({ type: "text", text });
@@ -145,6 +148,8 @@ export function translateAnthropicRequest(
       const t = b?.type;
       if (t === "text") {
         if (typeof b.text === "string") text += b.text;
+      } else if (t === "thinking" && role === "assistant" && typeof b.thinking === "string") {
+        reasoning += b.thinking;
       } else if (t === "image") {
         flushText();
         const src = (b.source ?? {}) as Record<string, unknown>;
@@ -161,12 +166,13 @@ export function translateAnthropicRequest(
         toolMsgs.push({ role: "tool", tool_call_id: b.tool_use_id, content: r.text });
         for (const url of r.images) toolImages.push({ type: "image_url", image_url: { url } });
       }
-      // thinking / redacted_thinking / document / search_result → 丢弃（v1）
+      // redacted_thinking / document / search_result 暂不翻译。
     }
     flushText();
     msgs.push(...toolMsgs);
     if (role === "assistant") {
       const msg: Record<string, unknown> = { role: "assistant" };
+      if (reasoning && model.startsWith("deepseek")) msg.reasoning_content = reasoning;
       if (parts.length) msg.content = normalizeParts(parts);
       if (toolCalls.length) {
         msg.tool_calls = toolCalls;
@@ -206,18 +212,38 @@ export function translateAnthropicRequest(
   else if (tc?.type === "none") out.tool_choice = "none";
   else if (tc?.type === "tool" && tc.name) out.tool_choice = { type: "function", function: { name: tc.name } };
 
+  const thinking = input.thinking as { type?: string } | undefined;
+  const effort = (input.output_config as { effort?: string } | undefined)?.effort;
+  if (model.startsWith("deepseek") && thinking?.type === "disabled") {
+    out.thinking = { type: "disabled" };
+    out.reasoning_effort = "none";
+  } else if (model.startsWith("deepseek") && (thinking?.type === "enabled" || thinking?.type === "adaptive")) {
+    out.thinking = { type: "enabled" };
+    if (effort) out.reasoning_effort = effort === "minimal" ? "low" : effort === "medium" || effort === "xhigh" ? "high" : effort;
+  }
   const stream = input.stream === true;
   out.stream = stream;
-  // 丢弃: metadata / top_k / thinking / context_management / output_config / container / service_tier 等 Anthropic 专属字段
+  // 其余 Anthropic 专属字段不传给 OpenAI 兼容上游。
 
   return { body: out, stream, approxInputTokens: approximateInputTokens(out) };
 }
 
-/** 粗略 token 估计（无依赖近似：UTF-8 字节数 / 4，下限 1）。 */
+/** 粗略文本 token 估计：UTF-8 字节数 / 4；图片 token 因上游模型而异，不在估算内。 */
 export function approximateInputTokens(body: unknown): number {
   let s = "";
   try {
-    s = JSON.stringify(body ?? null) ?? "";
+    // Image bytes are transport encoding, not text tokens. Their actual token cost
+    // is provider-specific; let upstream enforce the limit and report real usage.
+    s = JSON.stringify(body ?? null, function (this: Record<string, unknown>, key, value: unknown) {
+      if (key === "url" && typeof value === "string" && value.startsWith("data:image/")) {
+        return "[image data omitted from estimate]";
+      }
+      if (key === "data" && this.type === "base64" &&
+          typeof this.media_type === "string" && this.media_type.startsWith("image/")) {
+        return "[image data omitted from estimate]";
+      }
+      return value;
+    }) ?? "";
   } catch {
     s = "";
   }
@@ -232,6 +258,7 @@ export function translateChatCompletion(j: unknown, model: string): Record<strin
   const choice = ((root.choices as Array<Record<string, unknown>> | undefined)?.[0] ?? {}) as Record<string, unknown>;
   const msg = (choice.message ?? {}) as Record<string, unknown>;
   const blocks: Array<Record<string, unknown>> = [];
+  if (model.startsWith("deepseek") && typeof msg.reasoning_content === "string" && msg.reasoning_content) blocks.push({ type: "thinking", thinking: msg.reasoning_content, signature: "" });
   if (typeof msg.content === "string" && msg.content.length > 0) blocks.push({ type: "text", text: msg.content });
   const tcs = Array.isArray(msg.tool_calls) ? (msg.tool_calls as Array<Record<string, unknown>>) : [];
   for (const tc of tcs) {
@@ -314,8 +341,10 @@ class SseTranslator {
   private pending: string | null = null;
   private started = false;
   private finished = false;
+  private finishReason: unknown;
+  private upstreamUsage: TokenUsage | null = null;
   private openIndex = -1;
-  private openKind: "text" | null = null;
+  private openKind: "text" | "thinking" | null = null;
   private nextBlock = 0;
   /** 工具调用先缓冲、finish 时按顺序整块下发：任意交错 index 均不丢参数。 */
   private readonly toolCalls: StreamingToolCall[] = [];
@@ -396,7 +425,12 @@ class SseTranslator {
       this.ev("message_delta", {
         type: "message_delta",
         delta: { stop_reason: effectiveStopReason(rawFinishReason, ordered.length > 0), stop_sequence: null },
-        usage: { output_tokens: Math.max(1, Math.round(this.outChars / 4)) },
+        usage: this.upstreamUsage?.inputKnown && this.upstreamUsage.outputKnown ? {
+          input_tokens: this.upstreamUsage.input,
+          output_tokens: this.upstreamUsage.output,
+          ...(this.upstreamUsage.cacheReadKnown ? { cache_read_input_tokens: this.upstreamUsage.cacheRead } : {}),
+          ...(this.upstreamUsage.cacheWrite ? { cache_creation_input_tokens: this.upstreamUsage.cacheWrite } : {}),
+        } : { output_tokens: Math.max(1, Math.round(this.outChars / 4)) },
       }),
     );
     out.push(this.ev("message_stop", { type: "message_stop" }));
@@ -407,6 +441,8 @@ class SseTranslator {
     if (this.finished) return [];
     const out = this.ensureStart();
     const root = (j ?? {}) as Record<string, unknown>;
+    const usage = parseTokenUsage(j);
+    if (usage) this.upstreamUsage = mergeTokenUsage(this.upstreamUsage, usage);
 
     // 上游在 HTTP 200 流中发送 error 帧：转 Anthropic error 事件，不再补成功 stop
     if (root.error) {
@@ -431,6 +467,17 @@ class SseTranslator {
     const choice = (root.choices as Array<Record<string, unknown>> | undefined)?.[0];
     if (!choice) return out; // usage-only 尾块等
     const delta = (choice.delta ?? {}) as Record<string, unknown>;
+
+    if (this.model.startsWith("deepseek") && typeof delta.reasoning_content === "string" && delta.reasoning_content.length > 0) {
+      if (this.openKind !== "thinking") {
+        out.push(...this.closeOpen());
+        this.openIndex = this.nextBlock++;
+        this.openKind = "thinking";
+        out.push(this.ev("content_block_start", { type: "content_block_start", index: this.openIndex, content_block: { type: "thinking", thinking: "" } }));
+      }
+      this.outChars += delta.reasoning_content.length;
+      out.push(this.ev("content_block_delta", { type: "content_block_delta", index: this.openIndex, delta: { type: "thinking_delta", thinking: delta.reasoning_content } }));
+    }
 
     if (typeof delta.content === "string" && delta.content.length > 0) {
       if (this.openKind !== "text") {
@@ -508,7 +555,7 @@ class SseTranslator {
       }
     }
 
-    if (choice.finish_reason) out.push(...this.finish(choice.finish_reason));
+    if (choice.finish_reason) this.finishReason = choice.finish_reason;
     return out;
   }
 
@@ -524,7 +571,7 @@ class SseTranslator {
       if (line.startsWith("data:")) {
         const v = line.slice(5).trimStart();
         if (v === "[DONE]") {
-          out.push(...this.finish(undefined));
+          out.push(...this.finish(this.finishReason));
           this.pending = null;
         } else {
           let parsed: unknown;
@@ -564,7 +611,7 @@ class SseTranslator {
       const joined = this.pending;
       this.pending = null;
       if (joined === "[DONE]") {
-        out.push(...this.finish(undefined));
+        out.push(...this.finish(this.finishReason));
         return out;
       }
       try {
@@ -579,7 +626,7 @@ class SseTranslator {
       if (line.startsWith("data:")) {
         const v = line.slice(5).trimStart();
         if (v === "[DONE]") {
-          out.push(...this.finish(undefined));
+          out.push(...this.finish(this.finishReason));
           return out;
         }
         try {
@@ -589,7 +636,7 @@ class SseTranslator {
         }
       }
     }
-    out.push(...this.finish(undefined));
+    out.push(...this.finish(this.finishReason));
     return out;
   }
 }

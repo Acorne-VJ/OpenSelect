@@ -371,6 +371,19 @@ describe("错误与本地响应", () => {
     expect(approximateInputTokens(undefined)).toBeGreaterThanOrEqual(1);
   });
 
+  test("token estimate excludes encoded image data, not ordinary text", () => {
+    const data = "YWJj".repeat(1_000_000);
+    const anthropic = { messages: [{ role: "user", content: [
+      { type: "image", source: { type: "base64", media_type: "image/png", data } },
+    ] }] };
+    const openai = { messages: [{ role: "user", content: [
+      { type: "image_url", image_url: { url: `data:image/png;base64,${data}` } },
+    ] }] };
+    expect(approximateInputTokens(anthropic)).toBeLessThan(1000);
+    expect(approximateInputTokens(openai)).toBeLessThan(1000);
+    expect(approximateInputTokens({ messages: [{ role: "user", content: data }] })).toBeGreaterThan(900_000);
+  });
+
   test("approximateInputTokens 按 UTF-8 字节估算（中文不低估）", () => {
     const body = { x: "中文" };
     const bytes = new TextEncoder().encode(JSON.stringify(body)).length;
