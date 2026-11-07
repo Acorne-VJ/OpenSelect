@@ -1,5 +1,6 @@
 import { CLIENT_KINDS, CLIENT_LABELS, isClientKind } from "./client";
 import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { isFreeFirstEligible, loadCatalog, resetCatalogCache } from "./catalog";
 import { createBackup, listBackups, pruneBackups, verifyBackupCached, BACKUP_KEEP_DEFAULT } from "./backup";
 import { hasTrustAnchor, publicKeyFingerprint } from "./keys";
@@ -23,6 +24,13 @@ import { isProviderIntegration, providerModelIds, PROVIDER_LABELS } from "./prov
 import { pricingTablesHtml } from "./pricing";
 import { UI_CSS, navHtml } from "./ui";
 import { codingAutoOrder, isCodingAutoOrder } from "./coding_auto";
+import { readTraces } from "./request_trace";
+import { buildRoutingPlan } from "./route_plan";
+import { requestRequirements } from "./route_capabilities";
+import { ROUTING_MODES } from "./coding_auto";
+import { lastBackupRun, recordBackupRun } from "./backup_status";
+import { backupPassphrase } from "./backup_keychain";
+import { verifyEncryptedBackupRoundTrip, latestBackup } from "./backup";
 import { DASHBOARD_EN, PRICING_EN } from "./dashboard_locale";
 
 /** per-account available-model cache (populated on demand via /api/models/refresh) */
@@ -278,6 +286,7 @@ ${navHtml("dashboard")}
     <div class="btnrow" style="margin-top:0">
       <button id="backupBtn" class="btn primary">立即备份</button>
       <button id="backupSignBtn" class="btn">备份并签名</button>
+      <button id="backupVerifyBtn" class="btn">隔离验证最新备份</button>
       <span id="backupMsg" class="msg"></span>
     </div>
     <div class="more" id="backupInfo">加载中…</div>
@@ -566,6 +575,10 @@ function bindActions(){
   }
   document.getElementById("backupBtn").onclick=function(){ doBackup(false); };
   document.getElementById("backupSignBtn").onclick=function(){ doBackup(true); };
+  document.getElementById("backupVerifyBtn").textContent=osT("隔离验证最新备份","Verify latest backup in isolation");
+  document.getElementById("backupVerifyBtn").onclick=function(){
+    api("POST","/api/backup/verify",{}).then(function(r){setMsg("backupMsg",r.j.ok?osT("验证已在后台启动，结果将在下方更新","Verification started in background; results appear below"):r.j.error,r.j.ok?"ok":"err");refresh();});
+  };
   document.getElementById("wireBtn").onclick=function(){
     var b=this; b.disabled=true; setMsg("wireMsg",osT("注入中…","Connecting…"));
     api("POST","/api/wire",{}).then(function(r){
@@ -857,15 +870,18 @@ function render(s){
   var bk=s.backups||{list:[],keyFingerprint:null,hasKey:false,remote:null};
   var remoteLine = bk.remote
     ? '<br>异地备份远端 <code>'+esc(bk.remote)+'</code> <span class="muted">（每日 03:30 定时任务自动推送；推送/拉取在 CLI：<code>opensel backup --push/--fetch</code>）</span>'
-      + (bk.encryptRemote ? '<br><span class="muted">已配置加密；运行 <code>opensel install</code> 更新定时任务，并向 launchd 提供 OPENSELECT_BACKUP_PASSPHRASE。缺少口令时拒绝推送。</span>' : '<br><span style="color:#d29922">⚠ 当前配置为明文远端备份（含账号 Key）；使用 <code>opensel backup --remote &lt;url&gt; --encrypt</code> 启用加密。</span>')
+      + (bk.encryptRemote ? '<br><span class="muted">已配置加密；可运行 <code>opensel backup --keychain</code> 使用 macOS 钥匙串，或向 launchd 提供环境口令；缺少口令时拒绝推送。</span>' : '<br><span style="color:#d29922">⚠ 当前配置为明文远端备份（含账号 Key）；使用 <code>opensel backup --remote &lt;url&gt; --encrypt</code> 启用加密。</span>')
     : '<br><span class="muted">未配置异地备份远端（<code>opensel backup --remote &lt;url&gt;</code> 设置；推送/拉取在 CLI）</span>';
   if (osLang === 'en') remoteLine = bk.remote
     ? '<br>Remote backup <code>'+esc(bk.remote)+'</code> <span class="muted">(scheduled push daily at 03:30; use <code>opensel backup --push/--fetch</code> for manual push/pull)</span>'
-      + (bk.encryptRemote ? '<br><span class="muted">Encryption configured; run <code>opensel install</code> to update the schedule and provide OPENSELECT_BACKUP_PASSPHRASE to launchd. A missing passphrase prevents the push.</span>' : '<br><span style="color:#d29922">⚠ Remote backup is configured as plaintext and includes account keys. Enable encryption using <code>opensel backup --remote &lt;url&gt; --encrypt</code>.</span>')
+      + (bk.encryptRemote ? '<br><span class="muted">Encryption configured. Use <code>opensel backup --keychain</code> for macOS Keychain, or provide a launchd passphrase. A missing passphrase prevents uploads.</span>' : '<br><span style="color:#d29922">⚠ Remote backup is configured as plaintext and includes account keys. Enable encryption using <code>opensel backup --remote &lt;url&gt; --encrypt</code>.</span>')
     : '<br><span class="muted">No remote backup configured. Set one with <code>opensel backup --remote &lt;url&gt;</code>; push/pull through the CLI.</span>';
   document.getElementById("backupInfo").innerHTML = (bk.hasKey
     ? (osT("信任锚已配置（指纹 <b>","Trust anchor configured (fingerprint <b>")+esc(bk.keyFingerprint||"-")+osT("</b>）· 备份目录 ","</b>) · Backup directory ")+esc(BACKUP_DIR_TEXT)+osT(" · 签名备份可被远端验签"," · Signed backups can be verified remotely"))
     : (osT("未配置信任锚（<code>opensel keygen</code>）· 仅完整性校验，无法证明来源 · 备份目录 ","No trust anchor (<code>opensel keygen</code>); integrity checks alone do not prove origin · Backup directory ")+esc(BACKUP_DIR_TEXT))) + remoteLine;
+  document.getElementById("backupInfo").innerHTML += '<br>'+osT('口令来源：','Passphrase source: ')+(bk.keychain?'macOS Keychain':osT('环境变量/未配置','Environment/unconfigured'))+' · <code>opensel backup --keychain</code> · <code>opensel backup --verify</code>';
+  function backupResult(r){return r?(r.reason==='running'?osT('运行中','Running'):r.ok?osT('成功','Success'):osT('失败','Failed'))+' · '+fmtT(r.at)+' · '+esc(r.reason||r.file||''):osT('暂无记录','No result recorded');}
+  document.getElementById("backupInfo").innerHTML += '<br>'+osT('最近远端备份：','Latest remote backup: ')+backupResult(bk.lastPush)+'<br>'+osT('最近隔离验证：','Latest isolated verification: ')+backupResult(bk.lastVerification);
   document.getElementById("backups").innerHTML = (bk.list||[]).map(function(b){
     var sig = b.signed ? (b.verified===true ? '<span class="yes">'+osT('已验签','Verified')+'</span>' : (b.verified===false ? '<span class="no">'+osT('验签失败','Verification failed')+'</span>' : '<span class="muted">'+osT('未验签','Not verified')+'</span>')) : '<span class="muted">'+osT('无签名','Unsigned')+'</span>';
     return '<tr><td class="mono">'+esc(b.name)+(b.safety?' <span class="muted">'+osT('[安全备份]','[safety backup]')+'</span>':'')+'</td><td class="mono">'+esc(b.createdAt||"-")+'</td><td>'+(b.bytes/1024).toFixed(1)+'KB</td><td>'+b.files+'</td><td>'+(b.signed?'<span class="yes">'+osT('有','Yes')+'</span>':'<span class="muted">'+osT('无','No')+'</span>')+'</td><td>'+sig+'</td></tr>';
@@ -1115,7 +1131,7 @@ async function buildState(rt: Runtime, includeBackups = false) {
     alerts: recentAlerts(20),
     backups: includeBackups
       ? await buildBackupsState()
-      : { list: [], keyFingerprint: publicKeyFingerprint(), hasKey: hasTrustAnchor(), remote: (cfg.backup?.remote ?? null), encryptRemote: cfg.backup?.encryptRemote === true },
+      : { list: [], keyFingerprint: publicKeyFingerprint(), hasKey: hasTrustAnchor(), remote: (cfg.backup?.remote ?? null), encryptRemote: cfg.backup?.encryptRemote === true, keychain:cfg.backup?.keychain === true, lastPush:lastBackupRun(), lastVerification:lastBackupRun("verify") },
     current: {
       forcedAccountId: rt.forcedAccountId,
       // 服务刚重启还没有请求时，回退到最近活跃会话所在的账号
@@ -1189,6 +1205,9 @@ async function buildBackupsStateUncached(): Promise<{
   hasKey: boolean;
   remote: string | null;
   encryptRemote: boolean;
+  keychain: boolean;
+  lastPush: ReturnType<typeof lastBackupRun>;
+  lastVerification: ReturnType<typeof lastBackupRun>;
 }> {
   const keyFingerprint = publicKeyFingerprint();
   const hasKey = hasTrustAnchor();
@@ -1210,7 +1229,7 @@ async function buildBackupsStateUncached(): Promise<{
     });
   }
   const backup = (await loadConfig()).backup;
-  return { list, keyFingerprint, hasKey, remote: backup?.remote ?? null, encryptRemote: backup?.encryptRemote === true };
+  return { list, keyFingerprint, hasKey, remote: backup?.remote ?? null, encryptRemote: backup?.encryptRemote === true, keychain:backup?.keychain === true, lastPush:lastBackupRun(), lastVerification:lastBackupRun("verify") };
 }
 
 async function buildBackupsState(): Promise<{
@@ -1219,6 +1238,9 @@ async function buildBackupsState(): Promise<{
   hasKey: boolean;
   remote: string | null;
   encryptRemote: boolean;
+  keychain: boolean;
+  lastPush: ReturnType<typeof lastBackupRun>;
+  lastVerification: ReturnType<typeof lastBackupRun>;
 }> {
   if (backupStateCache && Date.now() - backupStateCache.ts < 60_000) return backupStateCache.value;
   const value = await buildBackupsStateUncached();
@@ -1490,6 +1512,10 @@ async function handleSettings(rt: Runtime, req: Request): Promise<Response> {
     if (!isCodingAutoOrder(body.codingAutoOrder)) errs.push("coding-auto 至少选择一条线路，且线路不能重复或未知");
     else cfg.policy.codingAutoOrder = codingAutoOrder(body.codingAutoOrder);
   }
+  if ("routingMode" in body) {
+    if (!ROUTING_MODES.includes(body.routingMode as never)) errs.push("无效线路排序模式");
+    else cfg.policy.routingMode = body.routingMode as Runtime["config"]["policy"]["routingMode"];
+  }
   if ("switchAt" in body) {
     const v = Number(body.switchAt);
     if (!Number.isFinite(v) || v < SWITCH_AT_MIN || v > SWITCH_AT_MAX) errs.push(`阈值须在 ${SWITCH_AT_MIN}–${SWITCH_AT_MAX} 之间`);
@@ -1655,6 +1681,7 @@ export function startDashboard(rt: Runtime, opts: { hostname?: string; port?: nu
   server: ReturnType<typeof Bun.serve>;
   stop: () => void;
 } {
+  let verificationJob: ReturnType<typeof Bun.spawn> | null = null;
   const server = Bun.serve({
     hostname: opts.hostname ?? rt.config.dashboard.host,
     port: opts.port ?? rt.config.dashboard.port,
@@ -1674,6 +1701,15 @@ export function startDashboard(rt: Runtime, opts: { hostname?: string; port?: nu
         if (p === "/api/stats") return Response.json(buildStats(rt, url));
         if (p === "/api/tokens") return Response.json(await buildTokenStats(rt, url));
         if (p === "/api/routes") return Response.json(await buildRouteAdvice(rt));
+        if (p === "/api/routes/preview" && req.method === "GET") {
+          const thinking = url.searchParams.get("thinking") ?? "unspecified", image = url.searchParams.get("image") ?? "";
+          if (!["on","off","unspecified"].includes(thinking) || !["","base64","url","file"].includes(image)) return json({error:"Invalid preview requirements"},400);
+          try {
+            const requirements = requestRequirements({thinking:thinking === "unspecified" ? undefined : {type:thinking === "on" ? "enabled" : "disabled"},messages:[{content:image ? [{type:"image",source:{type:image}}] : []}]},url.searchParams.get("context") || null);
+            return Response.json(buildRoutingPlan(rt,requirements,url.searchParams.get("client") || "other",url.searchParams.get("session")));
+          } catch { return json({error:"Invalid context capacity"},400); }
+        }
+        if (p === "/api/traces") return Response.json(readTraces(url.searchParams.get("id") || undefined));
         if (p === "/api/pricing/collect" && req.method === "POST") return Response.json(await collectTimePricing());
         if (p === "/api/requests") return handleRequests(url);
         if (p === "/api/switches") return handleSwitches(url);
@@ -1684,6 +1720,17 @@ export function startDashboard(rt: Runtime, opts: { hostname?: string; port?: nu
         if (p === "/requests") return new Response(requestsPage(), { headers: { "content-type": "text/html; charset=utf-8" } });
         if (p === "/switches") return new Response(switchesPage(), { headers: { "content-type": "text/html; charset=utf-8" } });
         if (p === "/api/backup" && req.method === "POST") return handleBackup(req);
+        if (p === "/api/backup/verify" && req.method === "POST") {
+          if (verificationJob) return json({ok:false,error:"Verification already running"},409);
+          if (!latestBackup()) return json({ok:false,error:"No local backup to verify"},404);
+          await recordBackupRun({ok:false,operation:"verify",encrypted:rt.config.backup?.encryptRemote===true,reason:"running"});
+          verificationJob = Bun.spawn([process.execPath,join(import.meta.dir,"cli.ts"),"backup","--verify"],{stdout:"ignore",stderr:"ignore"});
+          void verificationJob.exited.then(async(code)=>{
+            verificationJob=null;backupStateCache=null;
+            if (code !== 0) await recordBackupRun({ok:false,operation:"verify",encrypted:rt.config.backup?.encryptRemote===true,reason:"verification-failed"});
+          });
+          return json({ok:true,started:true},202);
+        }
         if (p === "/api/accounts/force" && req.method === "POST") return handleForceAccount(rt, req);
         if (p === "/api/clients/pin" && req.method === "POST") return handleClientPin(rt, req);
         if (p === "/healthz") return Response.json({ ok: true, service: "openselect-dashboard" });

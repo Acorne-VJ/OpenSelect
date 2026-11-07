@@ -16,6 +16,7 @@ import {
 import { UI_CSS, navHtml } from "./ui";
 import { codingAutoOrder, type CodingAutoStep } from "./coding_auto";
 import { ROUTE_CAPABILITIES } from "./route_capabilities";
+import { clientModelProfile } from "./client_profile";
 
 const PROVIDER_INTEGRATION: Record<string, string> = {
   opencode: "opencode-go",
@@ -197,6 +198,8 @@ export interface RouteAdvice {
   proxyPort: number;
   codingAutoOrder: CodingAutoStep[];
   routeCapabilities: typeof ROUTE_CAPABILITIES;
+  clientProfile: ReturnType<typeof clientModelProfile>;
+  routingMode: string;
   timezone: string;
   base: TimePricingData["base"];
   scoring: ScoringConfig;
@@ -412,6 +415,8 @@ export async function buildRouteAdvice(rt: Runtime): Promise<RouteAdvice> {
     proxyPort: rt.config.proxy.port,
     codingAutoOrder: codingAutoOrder(rt.config.policy.codingAutoOrder),
     routeCapabilities: ROUTE_CAPABILITIES,
+    clientProfile: clientModelProfile(rt),
+    routingMode: rt.config.policy.routingMode ?? "manual",
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     base: data.base,
     scoring,
@@ -474,10 +479,22 @@ ${navHtml("routes")}
     <h2 style="margin-top:0" id="orderTitle"></h2>
     <p class="muted" id="orderHelp"></p>
     <div id="orderRows"></div>
+    <div class="fr"><label id="modeLabel">排序模式</label><select id="routeMode"><option value="manual">Manual</option><option value="speed">Speed</option><option value="cost">Reference cost</option><option value="stable">Stability</option></select></div>
     <div class="btnrow"><button type="button" class="btn primary" id="orderSave"></button><span class="msg" id="orderMsg" role="status"></span></div>
     <h3 id="capabilityTitle"></h3>
     <p class="muted" id="capabilityHelp"></p>
     <div class="tablewrap"><table><thead id="capabilityHead"></thead><tbody id="capabilityRows"></tbody></table></div>
+  </div>
+  <div class="card" style="margin-top:14px">
+    <h2 id="previewTitle">线路预览</h2>
+    <p class="muted" id="previewHelp"></p>
+    <div class="fr"><label>Thinking</label><select id="previewThinking"><option value="unspecified">Default</option><option value="on">On</option><option value="off">Off</option></select>
+      <label>Image</label><select id="previewImage"><option value="">None</option><option value="base64">Base64</option><option value="url">URL</option><option value="file">File</option></select>
+      <label>Context</label><input id="previewContext" type="number" min="1" value="1000000" style="width:130px">
+      <label>Client</label><select id="previewClient"><option value="other">Other</option><option value="claude-code">Claude Code</option><option value="opencode">OpenCode</option></select>
+      <label>Session</label><input id="previewSession" placeholder="Optional" style="width:150px">
+      <button class="btn" id="previewRun">预览</button></div>
+    <p id="previewResult" role="status"></p><div class="tablewrap"><table><thead id="previewHead"></thead><tbody id="previewRows"></tbody></table></div>
   </div>
   <div class="card" id="commandCard" style="margin-top:14px">
     <h2 style="margin-top:0" id="commandTitle">客户端启动命令</h2>
@@ -566,15 +583,27 @@ function routeText(value){
 function providerName(id, name){
   return id==="deepseek" && name==="DeepSeek 官方" ? osT("DeepSeek 官方","DeepSeek official") : name;
 }
-var orderRows=null;
+var orderRows=null, modeInitialized=false;
 var orderLabels={zai:"Z.ai · GLM-5.3-Flash",minimax:"MiniMax · M3.1-Flash",opencode:"OpenCode Go · DeepSeek V4.1 Flash",deepseek:"DeepSeek API · DeepSeek Flash"};
 function renderOrder(){
   document.getElementById("orderTitle").textContent=osT("coding-auto 线路优先级","coding-auto route priority");
-  document.getElementById("orderHelp").textContent=osT("按顺序尝试选中的线路；额度达到阈值或线路不可用时尝试下一条。至少选择一条，保存后对新请求生效。","Selected routes are tried in order; the next route is used when a route reaches the threshold or is unavailable. Select at least one; saving affects new requests.");
+  document.getElementById("orderHelp").textContent=osT("手动模式按此顺序尝试；自动模式把此顺序用于同分优先级。额度达到阈值或不可用时回退。至少选择一条，保存后对新请求生效。","Manual mode follows this order; automatic modes use it to break ties. Unavailable routes or accounts at their threshold fall back. Select at least one; saving affects new requests.");
   document.getElementById("orderSave").textContent=osT("保存线路顺序","Save route order");
   document.getElementById("orderRows").innerHTML=orderRows.map(function(row,index){return '<div class="fr"><input type="checkbox" data-order-toggle="'+row.id+'"'+(row.enabled?' checked':'')+' aria-label="'+esc(osT('启用 ','Enable ')+orderLabels[row.id])+'"><span>'+(index+1)+'. '+esc(orderLabels[row.id])+'</span><button type="button" class="btn sm" data-order-move="'+row.id+'" data-dir="-1" aria-label="'+esc(osT('上移 ','Move up ')+orderLabels[row.id])+'"'+(index===0?' disabled':'')+'>↑</button><button type="button" class="btn sm" data-order-move="'+row.id+'" data-dir="1" aria-label="'+esc(osT('下移 ','Move down ')+orderLabels[row.id])+'"'+(index===orderRows.length-1?' disabled':'')+'>↓</button></div>';}).join('');
 }
+function previewReason(value){
+  var labels={ok:['正常','Eligible'],disabled:['已停用','Disabled'],'invalid-key':['密钥失效','Invalid key'],cooldown:['冷却中','Cooling down'],'rate-limited':['已限流','Rate limited'],'over-threshold':['达到切换阈值','At switch threshold'],'fallback-only':['仅兜底账号','Fallback-only account'],'model-not-enabled':['账号未启用此模型','Model not enabled'],'model-denied':['模型暂不可用','Model temporarily denied'],forced:['手动首选','Manual preference'],'client-pinned':['接入指定','Client preference'],sticky:['会话亲和','Session affinity'],'least-pressure':['最低压力','Lowest pressure'],'图片来源类型未验证或不支持':['图片来源未验证或不支持','Image source unsupported or unverified'],'关闭思考未验证或不支持':['不支持关闭思考','Thinking off unsupported'],'不满足客户端要求的上下文容量':['上下文容量不足或未知','Required context unavailable']};
+  var pair=labels[value];return pair?osT(pair[0],pair[1]):value;
+}
 function render(d){
+  document.getElementById("modeLabel").textContent=osT("排序模式","Ordering mode");
+  var modeSelect=document.getElementById("routeMode");
+  if(!modeInitialized){modeSelect.value=d.routingMode||"manual";modeInitialized=true;}
+  Array.from(modeSelect.options||[]).forEach(function(o){o.textContent={manual:osT('手动顺序','Manual order'),speed:osT('速度优先','Speed first'),cost:osT('参考成本优先','Reference cost first'),stable:osT('稳定优先','Stability first')}[o.value];});
+  document.getElementById("previewTitle").textContent=osT("线路预览（只读）","Route preview (read-only)");
+  document.getElementById("previewRun").textContent=osT("预览已保存设置","Preview saved settings");
+  document.getElementById("previewHead").innerHTML='<tr>'+[osT('线路','Route'),osT('状态','State'),osT('选择依据','Selection'),osT('账号状态','Account status'),osT('得分（越小越优）· 样本','Score (lower is better) · samples')].map(function(t){return '<th>'+esc(t)+'</th>';}).join('')+'</tr>';
+  document.getElementById("previewHelp").textContent=osT("按已保存设置和当前账号状态预览；不调用模型、不扣额度、不绑定会话。自动排序只在已启用且兼容的线路中生效；速度与稳定性需要最近30分钟至少5个样本，速度得分包含失败惩罚；排序至少保持60秒，改善不足15%不切换。成本是目录单价按输入80%/输出20%的参考值，不含套餐和缓存优惠，不是实际账单。实际请求仍会重新检查状态。","Uses saved settings and current account state. No model calls, credits, or session changes. Automatic ordering uses enabled compatible routes; speed/stability need 5 samples in 30 minutes; speed scores penalize failures. Order holds for 60 seconds and changes only for at least 15% improvement. Cost uses catalogue rates at 80% input/20% output, excluding plan/cache discounts; not a bill. Live requests recheck state.");
   document.getElementById("capabilityTitle").textContent=osT("请求能力检查","Request capability checks");
   document.getElementById("capabilityHelp").textContent=osT("coding-auto 会跳过不满足图片或 Thinking 要求的线路。上下文列是容量元数据，不是本次请求的实际 token 数；可用 x-openselect-context-window 请求头指定所需容量（例如 1000000），或使用 coding-auto[1m]。实际占用仍由上游校验，不会删除图片或截断消息。未验证的图片来源会跳过。","coding-auto skips routes incompatible with image or Thinking requirements. Context is capacity metadata, not the actual prompt token count. Set x-openselect-context-window (e.g. 1000000), or use coding-auto[1m], to require a capacity. The upstream validates actual usage; images and messages are never removed to make a request fit. Unverified image sources are skipped.");
   document.getElementById("capabilityHead").innerHTML='<tr>'+[osT('线路','Route'),osT('图片来源','Image sources'),'Thinking',osT('关闭 Thinking','Thinking off'),osT('上下文容量','Context capacity')].map(function(s){return '<th>'+esc(s)+'</th>';}).join('')+'</tr>';
@@ -586,16 +615,18 @@ function render(d){
   document.getElementById("commandHelp").textContent=osT("复制并粘贴命令到终端，再输入对应名称启动；命令仅在当前终端生效，使用 coding-auto 和上方已保存的线路。Pi 和 Hermes 使用 ~/.config/openselect 下独立的客户端配置及会话，不会使用原有客户端的设置和会话。OpenCode 命令适用于 v2。", "Paste a command into your terminal, then run its name. Commands last for the current shell and use coding-auto with the saved routes above. Pi and Hermes use separate client settings and sessions under ~/.config/openselect, not their existing settings and sessions. The OpenCode command requires v2.");
   document.getElementById("autoCommand").textContent="alias auto-cli='"+prefix+'"coding-auto[1m]"'+"'";
   var base="http://127.0.0.1:"+d.proxyPort;
-  var piConfig=JSON.stringify({providers:{openselect:{baseUrl:base,api:"anthropic-messages",apiKey:"openselect",models:[{id:"coding-auto",name:"Coding Auto",contextWindow:1000000,maxTokens:32768,input:["text","image"],reasoning:true,thinkingLevelMap:{max:"max"},compat:{forceAdaptiveThinking:true,allowEmptySignature:true}}]}}});
-  var openConfig=JSON.stringify({provider:{openselect:{npm:"@ai-sdk/anthropic",name:"OpenSelect",options:{baseURL:base+"/v1",apiKey:"openselect"},models:{"coding-auto":{name:"Coding Auto",modalities:{input:["text","image"],output:["text"]},limit:{context:200000,output:8192}}}}},model:"openselect/coding-auto"});
-  var hermesConfig=JSON.stringify({model:{provider:"custom:openselect",default:"coding-auto",supports_vision:true},providers:{openselect:{api:base,api_key:"openselect",transport:"anthropic_messages",default_model:"coding-auto"}}});
+  var profile=d.clientProfile||{id:"coding-auto",name:"Coding Auto",contextWindow:1000000,maxTokens:32768,input:["text","image"],reasoning:true};
+  var contextHeaders=profile.contextWindow?{'x-openselect-context-window':String(profile.contextWindow)}:{};
+  var piConfig=JSON.stringify({providers:{openselect:{baseUrl:base,api:"anthropic-messages",apiKey:"openselect",headers:contextHeaders,models:[Object.assign({},profile,{thinkingLevelMap:{max:"max"},compat:{forceAdaptiveThinking:true,allowEmptySignature:true}})]}}});
+  var openConfig=JSON.stringify({provider:{openselect:{npm:"@ai-sdk/anthropic",name:"OpenSelect",options:{baseURL:base+"/v1",apiKey:"openselect",headers:contextHeaders},models:{"coding-auto":{name:profile.name,reasoning:profile.reasoning,modalities:{input:profile.input,output:["text"]},limit:{context:profile.contextWindow,output:profile.maxTokens}}}}},model:"openselect/coding-auto"});
+  var hermesConfig=JSON.stringify({model:{provider:"custom:openselect",default:profile.id,supports_vision:profile.input.indexOf("image")>=0,context_length:profile.contextWindow},providers:{openselect:{api:base,api_key:"openselect",transport:"anthropic_messages",default_model:profile.id}}});
   document.getElementById("piCommand").textContent="mkdir -p \\\"$HOME/.config/openselect/pi\\\" && printf %s '"+piConfig+"' > \\\"$HOME/.config/openselect/pi/models.json\\\" && pi-auto() { PI_CODING_AGENT_DIR=\\\"$HOME/.config/openselect/pi\\\" pi --provider openselect --model coding-auto \\\"$@\\\"; }";
   document.getElementById("opencodeCommand").textContent="opencode-auto() { OPENCODE_CONFIG_CONTENT='"+openConfig+"' opencode mini --standalone --model openselect/coding-auto \\\"$@\\\"; }";
   document.getElementById("hermesCommand").textContent="hermes-auto() { mkdir -p \\\"$HOME/.config/openselect/hermes\\\" && printf %s '"+hermesConfig+"' > \\\"$HOME/.config/openselect/hermes/config.yaml\\\" && HERMES_HOME=\\\"$HOME/.config/openselect/hermes\\\" hermes --provider custom:openselect --model coding-auto \\\"$@\\\"; }";
   document.getElementById("deepseekCommand").textContent=prefix+"'deepseek-v4.1-flash[1m]'";
   if(!orderRows){var active=d.codingAutoOrder||[]; orderRows=active.map(function(id){return {id:id,enabled:true};}).concat(Object.keys(orderLabels).filter(function(id){return active.indexOf(id)<0;}).map(function(id){return {id:id,enabled:false};})); renderOrder();}
   var last=d.lastRequest;
-  document.getElementById("routeContext").textContent=osT("线路排行仅供参考，不会自动改变请求路由。首选账号：","Route rankings are advisory and do not change request routing. Preferred account: ")+(d.preferredAccount?d.preferredAccount.label:osT("未设置","None"))+osT("。最近一次请求：",". Last request: ")+(last?(last.accountLabel||osT("未落账号","Unassigned"))+" · "+(last.requestedModel||"—")+(last.servedModel && last.servedModel!==last.requestedModel?" → "+last.servedModel:"")+" · HTTP "+last.status+" · "+fmtT(last.ts):osT("暂无","None"));
+  document.getElementById("routeContext").textContent=osT("请求按已保存的排序模式执行；下方成本排行仅供参考。首选账号：","Requests follow the saved ordering mode; the cost rankings below are advisory. Preferred account: ")+(d.preferredAccount?d.preferredAccount.label:osT("未设置","None"))+osT("。最近一次请求：",". Last request: ")+(last?(last.accountLabel||osT("未落账号","Unassigned"))+" · "+(last.requestedModel||"—")+(last.servedModel && last.servedModel!==last.requestedModel?" → "+last.servedModel:"")+" · HTTP "+last.status+" · "+fmtT(last.ts):osT("暂无","None"));
   var b=d.best;
   if(b){
     document.getElementById("bestName").textContent=providerName(b.provider,b.providerName)+(b.kind==="plan"?" · "+b.name:"");
@@ -657,11 +688,18 @@ document.getElementById("orderSave").addEventListener("click",function(){
   var button=this, msg=document.getElementById("orderMsg"), order=orderRows.filter(function(row){return row.enabled;}).map(function(row){return row.id;});
   if(!order.length){msg.textContent=osT("请至少选择一条线路","Select at least one route");return;}
   button.disabled=true;
-  fetch("/api/settings",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({codingAutoOrder:order})})
+  fetch("/api/settings",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({codingAutoOrder:order,routingMode:document.getElementById('routeMode').value})})
     .then(function(r){return r.json().then(function(j){if(!r.ok||!j.ok) throw new Error(j.error||"save failed");});})
     .then(function(){msg.textContent=osT("已保存，新请求生效","Saved; applies to new requests");})
     .catch(function(e){msg.textContent=osT("保存失败：","Save failed: ")+e.message;})
     .finally(function(){button.disabled=false;});
+});
+document.getElementById("previewRun").addEventListener("click",function(){
+  var query=new URLSearchParams({thinking:document.getElementById('previewThinking').value,image:document.getElementById('previewImage').value,context:document.getElementById('previewContext').value,client:document.getElementById('previewClient').value,session:document.getElementById('previewSession').value});
+  fetch('/api/routes/preview?'+query).then(function(r){return r.json().then(function(d){if(!r.ok)throw new Error(d.error||'Preview failed');return d;});}).then(function(d){
+    document.getElementById('previewResult').textContent=osT('当前首条可用线路：','First available route: ')+(d.selectedRoute?orderLabels[d.selectedRoute]:osT('无','None'))+(d.held?osT(' · 防抖保持当前首选',' · Holding current preference'):'');
+    document.getElementById('previewRows').innerHTML=d.rows.map(function(r,i){return '<tr><td>'+(i+1)+'. '+esc(orderLabels[r.route])+'</td><td>'+esc(r.available?osT('可尝试','Eligible'):osT('跳过','Skip'))+'</td><td>'+esc(r.reasons.map(previewReason).join(' / ')||previewReason(r.selectionReason)||osT('无可用账号','No eligible account'))+'</td><td>'+esc(r.accounts.map(function(a){return (a.id===r.selectedAccount?'✓ ':'')+a.label+': '+previewReason(a.reason)+' ('+(a.pressure*100).toFixed(1)+'%)';}).join(' / '))+'</td><td>'+esc(r.score==null?osT('样本不足/未知','Insufficient samples/unknown'):Number(r.score).toFixed(4))+' · '+r.samples+'</td></tr>';}).join('');
+  }).catch(function(e){document.getElementById('previewResult').textContent=e.message;});
 });
 function load(){
   fetch("/api/routes").then(function(r){return r.json();}).then(render).catch(function(e){document.getElementById("hdr").textContent=osT("加载失败：","Load failed: ")+e.message;});

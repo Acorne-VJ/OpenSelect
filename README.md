@@ -20,9 +20,17 @@ Built with Bun and TypeScript. The proxy has no npm runtime dependencies; the da
 
 - Copy launch commands for Pi, OpenCode, Hermes, and Claude Code from the Routes page. Pi declares image input, Thinking support, and a 1M context window.
 - `coding-auto` filters selected routes for compatible image sources and explicit Thinking requirements. The Routes page lists capabilities; actual prompt size remains subject to upstream validation.
-- Token analytics distinguish end-to-end speed, time to first content, streaming output speed, and measured retry time. Charts expose values on hover and keyboard focus. Older unmeasured records remain unknown. Retry timing currently covers the active handler chain; it does not yet combine all provider fallback hops.
+- Token analytics distinguish end-to-end speed, time to first content, streaming output speed, and measured retry time. Charts expose values on hover and keyboard focus. Older unmeasured records remain unknown. End-to-end request IDs now connect cross-provider attempts, total wait, and retry time; failed and cancelled streams are distinguished. Logical request counts are separate from legacy handler logs.
 - Statistics share a database snapshot across aggregate views, invalidate cached results on writes, and group speed trends by local calendar boundaries.
 - Scheduled remote backups support persistent encryption settings. Configure a local passphrase before enabling them; a missing passphrase prevents encrypted uploads instead of falling back to plaintext. Enabling encryption does not remove earlier remote backups.
+
+### Route preview, automatic ordering, and recovery
+
+The Routes page previews saved routing settings without model calls or session changes, including capability checks, account thresholds, and manual/client preferences. Manual ordering remains the default. Optional speed, reference-cost, and stability modes rank only enabled routes; speed and stability require five recent samples. Ordering uses a 60-second hold and a 15% improvement threshold. Reference cost assumes 80% uncached input and 20% output at catalogue prices, excluding subscriptions/cache discounts; it is not a bill.
+
+Generated Pi, OpenCode, and Hermes launch configurations share model context and image metadata. Re-copy saved launch commands after updating; existing processes retain their loaded configuration. The Requests page shows the latest request IDs, their final route, and all upstream attempts.
+
+On macOS, `opensel backup --keychain` creates or reuses a Keychain encryption secret and verifies a backup through isolated encryption, decryption, signature/manifest checks, and SQLite integrity checks. Run `opensel install` to update the existing schedule. `opensel backup --verify` and the Settings page run isolated verification without restoring live files. The dashboard reports the latest upload and verification results. Keep the Keychain entry: another machine needs the same encryption secret to restore encrypted backups. Earlier plaintext remote archives are not deleted. Remote uploads append to existing history without checking out all previous archives.
 
 For the detailed feature reference, see [FEATURES.md](FEATURES.md) (Chinese).
 

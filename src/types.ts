@@ -38,6 +38,7 @@ export interface PolicyConfig {
   sessionTtlSec: number;
   /** Ordered, explicitly enabled coding-auto routes. Missing means the historical default order. */
   codingAutoOrder?: import("./coding_auto").CodingAutoStep[];
+  routingMode?: import("./coding_auto").RoutingMode;
   /**
    * 有序免费模型候选列表：客户端请求付费模型时，先按此顺序让免费模型承接；
    * 免费模型不可用（429/403/404/400）时自动回落到原请求的付费模型。
@@ -89,7 +90,7 @@ export interface Config {
    * 备份相关的持久化设置。
    * remote = 异地备份的 git 远端（定时备份任务会推送到它）；null/未设 = 只做本地备份。
    */
-  backup?: { remote?: string | null; encryptRemote?: boolean };
+  backup?: { remote?: string | null; encryptRemote?: boolean; keychain?: boolean };
   /**
    * opencode zen 免费层直通设置。
    * enabled = 是否启用（默认 true）；port = 本地 opencode serve 监听端口（默认 8790）；

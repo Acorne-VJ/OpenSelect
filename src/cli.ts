@@ -1,5 +1,8 @@
 #!/usr/bin/env bun
 import { CLIENT_KINDS, CLIENT_LABELS, isClientKind } from "./client";
+import { backupPassphrase, ensureBackupKeychain } from "./backup_keychain";
+import { recordBackupRun } from "./backup_status";
+import { verifyEncryptedBackupRoundTrip } from "./backup";
 import { spawnSync } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
@@ -890,6 +893,29 @@ async function cmdSyncCatalog(flags: Flags): Promise<void> {
 
 async function cmdBackup(flags: Flags): Promise<void> {
   try {
+    if (isTrue(flags.keychain)) {
+      const state = ensureBackupKeychain();
+      const cfg = await loadConfig();
+      const verification = await createBackup({ sign: existsSync(PRIVATE_KEY_PATH) });
+      const candidate = { ...cfg, backup: { ...cfg.backup, keychain: true, encryptRemote: true } };
+      if (!await verifyEncryptedBackupRoundTrip(verification.path,backupPassphrase(candidate))) throw new Error("Encrypted backup verification failed; configuration unchanged");
+      cfg.backup = candidate.backup;
+      await saveConfig(cfg);
+      await recordBackupRun({ok:true,operation:"verify",encrypted:true,verified:true,file:basename(verification.path)});
+      console.log(`✓ 备份钥匙串${state.created ? "已创建" : "已保留"}；加密解密及归档校验通过。远端加密设置已启用。`);
+      console.log("  运行 opensel install 更新定时任务。口令只在 macOS 钥匙串中，请妥善保留该条目；旧远端归档不受影响。");
+      return;
+    }
+    if (isTrue(flags.verify)) {
+      const archive = latestBackup();
+      if (!archive) throw new Error("No local backup to verify");
+      const cfg = await loadConfig();
+      const secret = backupPassphrase(cfg);
+      const ok = secret ? await verifyEncryptedBackupRoundTrip(archive,secret) : (await verifyBackup(archive)).ok;
+      await recordBackupRun({ok,operation:"verify",encrypted:!!secret,verified:ok,file:basename(archive)});
+      if (!ok) throw new Error("Backup verification failed");
+      console.log("✓ 隔离备份验证通过；未改写运行数据。"); return;
+    }
     if (isTrue(flags.list)) {
       const list = listBackups();
       if (list.length === 0) {
@@ -912,7 +938,7 @@ async function cmdBackup(flags: Flags): Promise<void> {
         console.error("✗ --fetch 需要远端地址（git 仓库路径或 URL）");
         process.exit(1);
       }
-      const fr = await fetchBackupsFromRemote({ remote, allowUnsigned: isTrue(flags["allow-unsigned"]) });
+      const fr = await fetchBackupsFromRemote({ remote, passphrase: backupPassphrase(await loadConfig()), allowUnsigned: isTrue(flags["allow-unsigned"]) });
       if (!fr.ok) {
         console.error(`✗ 拉取失败: ${fr.error}`);
         process.exit(1);
@@ -955,9 +981,13 @@ async function cmdBackup(flags: Flags): Promise<void> {
         console.error(`✗ --push 远端地址无效: ${remoteErr}`);
         process.exit(1);
       }
-      const encrypt = isTrue(flags.encrypt) || (await loadConfig()).backup?.encryptRemote === true;
-      const passphrase = process.env.OPENSELECT_BACKUP_PASSPHRASE ?? "";
+      const pushConfig = await loadConfig();
+      const encrypt = isTrue(flags.encrypt) || pushConfig.backup?.encryptRemote === true;
+      let passphrase = "";
+      try { passphrase = encrypt ? backupPassphrase(pushConfig) : ""; }
+      catch { await recordBackupRun({ok:false,operation:"push",encrypted:true,reason:"keychain-unavailable"}); throw new Error("Backup Keychain unavailable; upload refused"); }
       if (encrypt && !passphrase) {
+        await recordBackupRun({ok:false,operation:"push",encrypted:true,reason:"missing-passphrase"});
         console.error("✗ 加密推送需要环境变量 OPENSELECT_BACKUP_PASSPHRASE（不要写在命令行里）");
         process.exit(1);
       }
@@ -973,6 +1003,8 @@ async function cmdBackup(flags: Flags): Promise<void> {
       if (!encrypt) {
         console.error("⚠ 明文推送：远端仓库里将存在**明文账号 Key**（建议 --encrypt，或确保远端为私有仓库）");
       }
+      await recordBackupRun({ok:false,operation:"push",encrypted:encrypt,reason:"running"});
+      console.log(encrypt ? "正在创建、加密并推送备份…" : "正在创建并推送备份…");
       // 签名：--sign 强制；--sign-if-possible 在私钥存在时签名（定时任务用它 → 异地归档必须可验签）
       const signIfPossible = isTrue(flags["sign-if-possible"]);
       const sign = isTrue(flags.sign) || (signIfPossible && existsSync(PRIVATE_KEY_PATH));
@@ -980,10 +1012,12 @@ async function cmdBackup(flags: Flags): Promise<void> {
       const local = await createBackup({ sign });
       const pr = pushBackupToRemote({ archive: local.path, remote, encrypt, passphrase });
       if (!pr.ok) {
+        await recordBackupRun({ok:false,operation:"push",encrypted:encrypt,reason:"remote-push-failed"});
         console.error(`✗ 推送失败: ${pr.error}`);
         process.exit(1);
       }
       console.log(`✓ 已推送到 ${pr.remote}（分支 ${pr.branch}，commit ${(pr.commit ?? "").slice(0, 8)}）`);
+      await recordBackupRun({ok:true,operation:"push",encrypted:encrypt,file:pr.file});
       console.log(`  文件: ${pr.file}${pr.encrypted ? "（已加密）" : "（**明文，含账号 Key**）"}`);
       // 推送路径也要执行本地保留策略（否则每日推送会让本地归档无限增长）
       const keepPush = flags.keep !== undefined ? Number(flags.keep) : BACKUP_KEEP_DEFAULT;
@@ -1320,6 +1354,8 @@ function usage(): void {
   opensel backup --push <remote> [--encrypt] [--yes]   推送备份到 git 远端（--encrypt 用 OPENSELECT_BACKUP_PASSPHRASE 加密）
   opensel backup --remote <url|off> [--encrypt[=false]] 设置/清除异地备份远端；--encrypt 启用定时远端加密
   opensel backup --fetch <remote> [--allow-unsigned]
+  opensel backup --keychain                 创建/复用 macOS 钥匙串口令并验证加密备份（不推远端）
+  opensel backup --verify                   隔离验证最新备份（不恢复运行数据）
                                            从 git 远端拉取备份并逐个校验 SHA-256（+验签）
   opensel restore <path|latest> [--dry-run] [--no-service] [--allow-unsigned] [--yes]
                                            从备份恢复（恢复前自动生成安全备份）

@@ -106,6 +106,10 @@ ${PAGE_LOCALE}
 }
 
 const REQUESTS_BODY = `
+  <details class="card" open><summary id="traceTitle">完整请求追踪</summary>
+    <p id="traceSummary" class="muted"></p><div class="tablewrap"><table><thead id="traceHead"></thead><tbody id="traceRows"></tbody></table></div>
+    <pre id="traceDetails" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre>
+  </details>
   <div class="filterbar card">
     <label>范围 <select id="range"><option value="24h" selected>最近 24h</option><option value="today">今天</option><option value="7d">最近 7 天</option><option value="30d">最近 30 天</option><option value="all">全部</option></select></label>
     <label>接入 <select id="client"><option value="">全部</option></select></label>
@@ -128,6 +132,16 @@ const REQUESTS_BODY = `
 `;
 
 const REQUESTS_JS = `
+function loadTraces(){
+  document.getElementById('traceTitle').textContent=osT('完整请求追踪 · 最近30条','End-to-end request traces · latest 30');
+  document.getElementById('traceHead').innerHTML='<tr>'+[osT('请求 ID','Request ID'),osT('状态','State'),osT('尝试','Attempts'),osT('总耗时','Total time'),osT('最终线路 / 模型','Final route / model')].map(function(t){return '<th>'+esc(t)+'</th>';}).join('')+'</tr>';
+  fetch('/api/traces').then(function(r){return r.json();}).then(function(d){
+    document.getElementById('traceSummary').textContent=osT('最近24小时：逻辑请求 ','Last 24 hours: logical requests ')+num(d.totals.logical_requests)+osT(' · 实际上游尝试 ',' · upstream attempts ')+num(d.totals.upstream_attempts)+osT('。下方旧流水是处理链记录，不能当作去重请求数。响应头 x-openselect-request-id 可定位同一请求。',' . The legacy log below contains handler records, not deduplicated requests. Use x-openselect-request-id to locate a request.');
+    document.getElementById('traceRows').innerHTML=d.traces.map(function(t){return '<tr><td><button class="btn mono" data-trace="'+esc(t.id)+'">'+esc(t.id)+'</button></td><td>'+esc(t.state)+' '+esc(t.status||'')+'</td><td>'+num(t.attempts||0)+' attempts</td><td>'+(t.duration_ms==null?'—':(t.duration_ms/1000).toFixed(3)+'s')+'</td><td>'+esc(t.final_provider||'—')+' / '+esc(t.final_model||'—')+'</td></tr>';}).join('');
+  }).catch(function(e){document.getElementById('traceSummary').textContent=e.message;});
+}
+document.getElementById('traceRows').addEventListener('click',function(e){var button=e.target.closest('[data-trace]');if(!button)return;fetch('/api/traces?id='+encodeURIComponent(button.dataset.trace)).then(function(r){return r.json();}).then(function(d){document.getElementById('traceDetails').textContent=JSON.stringify(d,null,2);});});
+loadTraces();
 var meta={accounts:[],clients:[]};
 var curOffset=0, curLimit=100, curTotal=0;
 function labels(){
@@ -197,7 +211,7 @@ function load(offset){
 }
 function toggleReq(id){ var e=document.getElementById("d-"+id); if(e) e.style.display=e.style.display==="none"?"table-row":"none"; }
 document.getElementById("apply").onclick=function(){ load(0); };
-document.getElementById("refresh").onclick=function(){ load(curOffset); };
+document.getElementById("refresh").onclick=function(){ load(curOffset); loadTraces(); };
 document.getElementById("prev").onclick=function(){ load(Math.max(0,curOffset-curLimit)); };
 document.getElementById("next").onclick=function(){ load(curOffset+curLimit); };
 loadMeta();

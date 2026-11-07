@@ -1,4 +1,6 @@
 import { detectClient } from "./client";
+import { tracedFetch, withRequestTrace } from "./request_trace";
+import { buildRoutingPlan } from "./route_plan";
 import {
   familyFromPath,
   isFreeFirstEligible,
@@ -13,7 +15,7 @@ import { parseTokenUsage, tapUsageStream } from "./tokens";
 import { deepSeekFallbackRoute, resolveProviderRoute } from "./providers";
 import { handleProviderRequest } from "./provider_proxy";
 import { codingAutoOrder } from "./coding_auto";
-import { capabilityRejections, requestRequirements, ROUTE_CAPABILITIES, supportsRequirements } from "./route_capabilities";
+import { capabilityRejections, requestRequirements, ROUTE_CAPABILITIES } from "./route_capabilities";
 import { handleDeepSeekTool } from "./tools";
 import type { Runtime } from "./state";
 import {
@@ -552,7 +554,11 @@ function contextOverflowMessage(text: string): string | null {
   return `prompt is too long: ${prompt} tokens > ${max} maximum; run /compact or reduce context`;
 }
 
-export async function handleProxyRequest(rt: Runtime, req: Request, opts?: { disableFreeRouting?: boolean; originalRequestedModel?: string }): Promise<Response> {
+export async function handleProxyRequest(rt: Runtime, req: Request, opts?: { disableFreeRouting?: boolean; originalRequestedModel?: string; allowedAccountIds?: Set<string> }): Promise<Response> {
+  return withRequestTrace(req, () => handleProxyRequestInner(rt, req, opts));
+}
+
+async function handleProxyRequestInner(rt: Runtime, req: Request, opts?: { disableFreeRouting?: boolean; originalRequestedModel?: string; allowedAccountIds?: Set<string> }): Promise<Response> {
   const started = Date.now();
   const url = new URL(req.url);
 
@@ -640,7 +646,8 @@ export async function handleProxyRequest(rt: Runtime, req: Request, opts?: { dis
     let requirements: ReturnType<typeof requestRequirements>;
     try { requirements = requestRequirements(requestBody, req.headers.get("x-openselect-context-window")); }
     catch (error) { return jsonResponse(400, anthropicError("invalid_request_error", String(error))); }
-    const order = configuredOrder.filter((step) => supportsRequirements(ROUTE_CAPABILITIES[step], requirements));
+    const plan = buildRoutingPlan(rt, requirements, detectClient(req, url.pathname), req.headers.get("x-opencode-session") ?? req.headers.get("x-session-id"), true);
+    const order = plan.executionOrder;
     if (!order.length) {
       const details = configuredOrder.map((step) => step + ": " + capabilityRejections(ROUTE_CAPABILITIES[step], requirements).join("、")).join("；");
       const error = "已选 coding-auto 线路均不满足请求能力：" + details + "。实际上下文占用及供应商容量仍须上游验证。";
@@ -653,19 +660,18 @@ export async function handleProxyRequest(rt: Runtime, req: Request, opts?: { dis
       const step = order[index]!;
       const next = index + 1 < order.length ? () => run(index + 1) : undefined;
       if (step === "opencode") {
+        const strict = rt.config.policy.codingAutoOrder !== undefined || !!(rt.config.policy.routingMode && rt.config.policy.routingMode !== "manual");
+        const available = new Set(plan.rows.find((r) => r.route === "opencode")?.accounts.filter((a) => a.eligible).map((a) => a.id));
         // Explicitly configured routes must not retry a drained account merely
         // because the generic pool has a last-resort selection policy.
-        if (rt.config.policy.codingAutoOrder !== undefined) {
-          const now = Date.now();
-          const eligible = rt.config.accounts.some((account) => account.integration === "opencode-go" &&
-            eligibility(account, rt.states.get(account.id), rt.usages.get(account.id), { free: false, now, switchAt: rt.config.policy.switchAt }).eligible);
-          if (!eligible) return next ? next() : jsonResponse(503, anthropicError("openselect_provider_unavailable", "OpenCode Go 暂无符合阈值的账号"));
+        if (strict) {
+          if (!available.size) return next ? next() : jsonResponse(503, anthropicError("openselect_provider_unavailable", "OpenCode Go 暂无符合阈值及模型要求的账号"));
         }
         const headers = new Headers(req.headers);
         headers.delete("content-length");
         headers.set("x-openselect-no-deepseek-fallback", "1");
         const child = new Request(req.url, { method: req.method, headers, body: rewriteBodyModel(bodyBuf, "deepseek-v4.1-flash") });
-        const response = await handleProxyRequest(rt, child, { disableFreeRouting: rt.config.policy.codingAutoOrder !== undefined || requirements.imageSources.length > 0 || requirements.thinking !== "unspecified", originalRequestedModel: "coding-auto" });
+        const response = await handleProxyRequest(rt, child, { disableFreeRouting: strict || requirements.imageSources.length > 0 || requirements.thinking !== "unspecified", originalRequestedModel: "coding-auto",allowedAccountIds:strict?available:undefined });
         if (!next || response.status < 400 || response.status === 400 || response.status === 413) return response;
         try { await response.body?.cancel(); } catch { /* best effort */ }
         return next();
@@ -1032,7 +1038,7 @@ export async function handleProxyRequest(rt: Runtime, req: Request, opts?: { dis
     if (!decision) {
       decision = pickAccount({
         // 通用 opencode-go 路径只允许 opencode-go 账号；Z.ai/MiniMax 走 provider 分支。
-        accounts: rt.config.accounts.filter((a) => a.integration === "opencode-go"),
+        accounts: rt.config.accounts.filter((a) => a.integration === "opencode-go" && (!opts?.allowedAccountIds || opts.allowedAccountIds.has(a.id))),
         states: rt.states,
         usages: rt.usages,
         sessionAccount: upstreamAttempts === 0 ? priorSessionAccount : null,
@@ -1141,7 +1147,7 @@ export async function handleProxyRequest(rt: Runtime, req: Request, opts?: { dis
 
     let res: Response;
     try {
-      res = await fetch(upstreamUrl, {
+      res = await tracedFetch(upstreamUrl, {
         method: req.method,
         headers,
         body: attemptBody ?? undefined,
@@ -1151,7 +1157,7 @@ export async function handleProxyRequest(rt: Runtime, req: Request, opts?: { dis
         // 免费候选用更短超时：避免「免费模型连上不吐字节」吃掉客户端全部时间预算，
         // 导致付费回落永远送不到（代理自身无字节静默上限约 255s）。
         timeout: isFreeAttempt ? 30_000 : 600_000,
-      });
+      }, { provider: account.integration, model: attemptModel, accountId: account.id });
     } catch (e) {
       if (isFreeAttempt) {
         // 免费模型网络错误：视为模型级失败（不冷却账号，避免污染付费流量）

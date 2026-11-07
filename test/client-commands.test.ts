@@ -42,6 +42,8 @@ test("route page commands use coding-auto and the configured proxy port", () => 
         const config = JSON.parse(result.stdout.toString().split("\n")[2]);
         expect(config.provider.openselect.options.baseURL).toBe("http://127.0.0.1:18788/v1");
         expect(config.provider.openselect.models["coding-auto"].modalities.input).toEqual(["text", "image"]);
+        expect(config.provider.openselect.models["coding-auto"].limit).toEqual({context:1000000,output:32768});
+        expect(config.provider.openselect.options.headers["x-openselect-context-window"]).toBe("1000000");
       }
     }
     const pi = JSON.parse(readFileSync(join(home, ".config/openselect/pi/models.json"), "utf8"));

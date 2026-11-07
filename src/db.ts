@@ -5,6 +5,7 @@ import { ensureDir } from "./util";
 import { USAGE_SCALE_FIXED_AT } from "./usage";
 import type { AccountState, AccountUsage, RequestLogEntry, SwitchLogEntry } from "./types";
 import type { TokenUsage } from "./tokens";
+import { traceContext } from "./trace_context";
 
 let db: Database | null = null;
 
@@ -123,11 +124,18 @@ export function migrateSchema(d: Database): void {
     ["first_content_ms", "INTEGER"],
     ["generation_ms", "INTEGER"],
     ["retry_ms", "INTEGER"],
+    ["trace_id", "TEXT"],
   ] as const) {
     if (!cols.some((c) => c.name === name)) d.exec(`ALTER TABLE requests ADD COLUMN ${name} ${type}`);
   }
   d.exec("CREATE INDEX IF NOT EXISTS idx_requests_client ON requests(client, ts)");
   d.exec("CREATE INDEX IF NOT EXISTS idx_requests_provider ON requests(provider, ts)");
+  d.exec(`CREATE INDEX IF NOT EXISTS idx_requests_trace ON requests(trace_id);
+    CREATE TABLE IF NOT EXISTS request_traces (id TEXT PRIMARY KEY, started_at INTEGER NOT NULL, path TEXT, state TEXT,
+      status INTEGER, duration_ms INTEGER, attempts INTEGER, final_provider TEXT, final_model TEXT, first_content_ms INTEGER, generation_ms INTEGER, retry_ms INTEGER);
+    CREATE INDEX IF NOT EXISTS idx_traces_time ON request_traces(started_at);
+    CREATE TABLE IF NOT EXISTS request_attempts (trace_id TEXT NOT NULL, ordinal INTEGER NOT NULL, started_at INTEGER, provider TEXT,
+      model TEXT, account_id TEXT, header_status INTEGER, header_ms INTEGER, PRIMARY KEY(trace_id,ordinal));`);
 }
 
 export function insertUsage(u: AccountUsage): void {
@@ -245,8 +253,8 @@ export function logRequest(e: RequestLogEntry): number | null {
       .query(
         `INSERT INTO requests
           (ts, session_id, model, served_model, family, account_id, provider, status, attempts, latency_ms, error, path, client,
-           input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, total_tokens, token_estimated, cache_read_known)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20)`,
+           input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, total_tokens, token_estimated, cache_read_known, trace_id)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21)`,
       )
       .run(
         e.ts,
@@ -269,6 +277,7 @@ export function logRequest(e: RequestLogEntry): number | null {
         e.totalTokens ?? null,
         e.tokenEstimated == null ? null : e.tokenEstimated ? 1 : 0,
         e.cacheReadKnown == null ? null : e.cacheReadKnown ? 1 : 0,
+        traceContext.getStore()?.id ?? null,
       );
     const id = Number(info.lastInsertRowid);
     return Number.isFinite(id) ? id : null;

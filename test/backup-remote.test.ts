@@ -8,7 +8,7 @@ import { join } from "node:path";
 // isolate HOME before importing modules that capture it
 process.env.HOME = mkdtempSync(join(tmpdir(), "openselect-home-remote-"));
 
-const { createBackup, fetchBackupsFromRemote, pushBackupToRemote, scheduledBackupPushArgs, validateRemote, verifyBackup } = await import("../src/backup");
+const { createBackup, verifyEncryptedBackupRoundTrip, fetchBackupsFromRemote, pushBackupToRemote, scheduledBackupPushArgs, validateRemote, verifyBackup } = await import("../src/backup");
 const { xmlEscape } = await import("../src/util");
 const { migrateSchema } = await import("../src/db");
 
@@ -32,6 +32,7 @@ function makeBareRepo(): string {
   const dir = mkdtempSync(join(tmpdir(), "openselect-bare-"));
   const r = spawnSync("git", ["init", "--bare", "-q", dir], { encoding: "utf8" });
   if (r.status !== 0) throw new Error(`git init --bare 失败: ${r.stderr}`);
+  spawnSync("git",["--git-dir",dir,"config","uploadpack.allowFilter","true"]);
   return dir;
 }
 
@@ -47,6 +48,21 @@ function gitShowBin(remote: string, ref: string): Buffer {
 }
 
 describe("备份私有 remote（git 推送/拉取）", () => {
+  test("远端访问失败时不当作空分支继续提交", async () => {
+    const env=makeEnv();
+    const archive=await createBackup({paths:env.paths});
+    const missing=join(mkdtempSync(join(tmpdir(),"openselect-missing-remote-")),"absent.git");
+    const result=pushBackupToRemote({archive:archive.path,remote:missing});
+    expect(result.ok).toBe(false);expect(result.error).toContain("git fetch");
+  });
+  test("隔离解密验证包含 SQLite 完整性，且不恢复运行文件", async () => {
+    const env=makeEnv();
+    const before=readFileSync(env.db);
+    const archive=await createBackup({paths:env.paths});
+    expect(await verifyEncryptedBackupRoundTrip(archive.path,"test-only-backup-verification-passphrase")).toBe(true);
+    expect(readFileSync(env.db).equals(before)).toBe(true);
+  });
+
   test("定时加密参数与缺口令时拒绝降级到明文", () => {
     const home = mkdtempSync(join(tmpdir(), "openselect-encrypted-schedule-"));
     mkdirp(join(home, ".openselect"));

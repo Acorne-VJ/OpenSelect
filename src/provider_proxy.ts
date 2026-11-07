@@ -1,4 +1,5 @@
 import { detectClient } from "./client";
+import { tracedFetch } from "./request_trace";
 import { logRequest, updateRequestContentTiming, updateRequestDuration, updateRequestTokens } from "./db";
 import { accountPressure, eligibility, isRateLimited } from "./policy";
 import { parseTokenUsage, tapUsageStream } from "./tokens";
@@ -64,6 +65,7 @@ function pickProviderAccount(
   sessionId: string,
   denyScope: string,
   allowFallbackOnly = false,
+  clientAccountId?: string,
 ): Account | null {
   const now = Date.now();
   const integration = providerIntegration(provider);
@@ -86,6 +88,8 @@ function pickProviderAccount(
       }).eligible,
   );
   if (eligible.length === 0) return null;
+  const pinned = clientAccountId ? eligible.find((a) => a.id === clientAccountId) : undefined;
+  if (pinned) return pinned;
   if (rt.forcedAccountId) {
     const forced = eligible.find((a) => a.id === rt.forcedAccountId);
     if (forced) return forced;
@@ -301,11 +305,12 @@ export async function handleProviderRequest(opts: {
         sessionId,
         candidate.provider === "commandcode" && kind === "anthropic" ? "chat" : denyScope,
         allowFallbackOnly,
+        rt.config.policy.clientAccounts?.[client],
       );
       if (!account) break;
       tried.add(account.id);
       attempted.push(account.id);
-    const attemptStarted = Date.now();
+      const attemptStarted = Date.now();
 
       let body: string;
       let commandStream = false;
@@ -328,11 +333,11 @@ export async function handleProviderRequest(opts: {
       const upstreamKind: WireKind = candidate.provider === "commandcode" && kind === "anthropic" ? "openai-chat" : kind;
       let res: Response;
       try {
-        res = await fetch(providerUrl(account, upstreamKind, countTokens), {
+        res = await tracedFetch(providerUrl(account, upstreamKind, countTokens), {
           method: "POST",
           headers: headersFor(req, account, upstreamKind),
           body,
-        });
+        }, { provider: account.integration, model: candidate.model, accountId: account.id });
       } catch (e) {
         lastStatus = 0;
         lastText = String(e);

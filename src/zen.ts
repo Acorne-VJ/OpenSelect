@@ -4,6 +4,8 @@
  * 我们通过 server 的 HTTP API 驱动它生成文本。
  */
 
+import { tracedFetch } from "./request_trace";
+
 export interface ZenModel {
   id: string;
   name: string;
@@ -153,17 +155,18 @@ export function zenResetServer(reason: string): void {
   zenServer = null;
 }
 
-async function zenFetch(port: number, path: string, method = "GET", body?: unknown) {
+async function zenFetch(port: number, path: string, method = "GET", body?: unknown, traceModel?: string) {
   const { password } = await ensureZenServer(port);
   const h = { "content-type": "application/json", authorization: "Basic " + btoa("opencode:" + password) };
   let r: Response;
   try {
-    r = await fetch(`http://127.0.0.1:${port}${path}`, {
+    const init = {
       method,
       headers: h,
       body: body ? JSON.stringify(body) : undefined,
       signal: AbortSignal.timeout(ZEN_REQUEST_TIMEOUT_MS),
-    });
+    };
+    r = traceModel ? await tracedFetch(`http://127.0.0.1:${port}${path}`,init,{provider:"zen",model:traceModel,accountId:""}) : await fetch(`http://127.0.0.1:${port}${path}`,init);
   } catch (e) {
     const msg = String(e);
     // 只有连接层面的失败才重启 server；请求超时只是这一次慢，不能把 server 杀掉
@@ -215,7 +218,7 @@ export async function zenComplete(modelId: string, prompt: string, maxTokens = 4
     const data = (await zenFetch(port, `/api/session/${sid}/generate`, "POST", {
       prompt,
       max_tokens: maxTokens,
-    })) as SessionGenerateResp | null;
+    },modelId)) as SessionGenerateResp | null;
     const text = data?.data?.text ?? "";
     if (!text.trim()) throw new Error(`zen ${modelId} 返回空内容`);
     return text;

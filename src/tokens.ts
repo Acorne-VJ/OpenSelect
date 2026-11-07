@@ -161,6 +161,7 @@ export function tapUsageStream(
   estimated = false,
   onComplete?: () => void,
   onContentTiming?: (first: number, last: number) => void,
+  onStreamError?: () => void,
 ): ReadableStream<Uint8Array> {
   const decoder = new TextDecoder();
   const reader = source.getReader();
@@ -177,6 +178,7 @@ export function tapUsageStream(
     if (line.trimStart().startsWith("data:")) {
       try {
         const event = JSON.parse(line.trimStart().slice(5));
+        if (event?.type === "error" || event?.error) onStreamError?.();
         if (hasGeneratedContent(event)) {
           const now = Date.now();
           firstContent ??= now;

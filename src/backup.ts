@@ -625,8 +625,8 @@ export interface FetchResult {
 
 function git(args: string[], cwd?: string): { ok: boolean; out: string; err: string } {
   // 禁止 git 交互式提示（ssh 口令/凭据）导致长时间挂起
-  const env: Record<string, string | undefined> = { ...process.env, GIT_TERMINAL_PROMPT: "0" };
-  if (process.env.GIT_SSH_COMMAND) env.GIT_SSH_COMMAND = `${process.env.GIT_SSH_COMMAND} -o BatchMode=yes`;
+  const env: Record<string, string | undefined> = { ...process.env, GIT_TERMINAL_PROMPT: "0", LC_ALL:"C" };
+  env.GIT_SSH_COMMAND = `${process.env.GIT_SSH_COMMAND || "ssh"} -o BatchMode=yes -o ConnectTimeout=15`;
   const r = spawnSync("git", args, { encoding: "utf8", cwd, timeout: 120_000, env });
   return {
     ok: r.status === 0,
@@ -681,6 +681,30 @@ function encryptArchive(src: string, dest: string, passphrase: string): { ok: bo
     { encoding: "utf8", env: { ...process.env, OPENSELECT_BACKUP_PASSPHRASE: passphrase }, timeout: 60_000 },
   );
   return { ok: r.status === 0, err: (r.stderr || r.stdout || "").trim() };
+}
+
+/** Decrypt to an isolated temporary file and verify its manifest/signature.
+ * No service stop, config restore, or overwrite of the live SQLite database. */
+export async function verifyEncryptedBackupRoundTrip(archive: string, passphrase: string): Promise<boolean> {
+  if (!passphrase) return false;
+  const stage = mkdtempSync(join(tmpdir(),"openselect-encrypted-verify-"));
+  try {
+    chmodSync(stage,0o700);
+    const encrypted = join(stage,"backup.enc"), plain = join(stage,"backup.tar.gz");
+    if (!encryptArchive(archive,encrypted,passphrase).ok || !decryptArchive(encrypted,plain,passphrase).ok || sha256File(archive)!==sha256File(plain)) return false;
+    if (existsSync(archive+".sig")) copyFileSync(archive+".sig",plain+".sig");
+    const verified = await verifyBackup(plain);
+    if (!verified.ok) return false;
+    if (verified.manifest?.files.some((f) => f.name === "data.sqlite")) {
+      const unpack = spawnSync("tar",["-xzf",plain,"-C",stage,"data.sqlite"],{encoding:"utf8",timeout:60000});
+      if (unpack.status !== 0) return false;
+      const copy = new Database(join(stage,"data.sqlite"),{readonly:true});
+      try { if ((copy.query("PRAGMA quick_check").get() as {quick_check:string}).quick_check !== "ok") return false; }
+      finally { copy.close(); }
+    }
+    return true;
+  } catch { return false; }
+  finally { rmSync(stage,{recursive:true,force:true}); }
 }
 
 /**
@@ -752,36 +776,54 @@ export function pushBackupToRemote(opts: {
     if (!init.ok) return { ...base, error: `git init 失败: ${init.err}` };
     const addRemote = git(["remote", "add", "origin", opts.remote], stage);
     if (!addRemote.ok) return { ...base, error: `git remote add 失败: ${addRemote.err}` };
-    const fetched = git(["fetch", "--depth", "1", "origin", `refs/heads/${branch}`], stage);
+    // Fetch complete ancestry, but do not download/check out every historical
+    // archive. The index can retain existing blob IDs without reading secrets.
+    git(["config","remote.origin.promisor","true"],stage);
+    git(["config","remote.origin.partialclonefilter","blob:none"],stage);
+    const fetched = git(["fetch", "--filter=blob:none", "origin", `refs/heads/${branch}`], stage);
     if (fetched.ok) {
-      const co = git(["checkout", "-B", branch, "FETCH_HEAD"], stage);
-      if (!co.ok) return { ...base, error: `git checkout 失败: ${co.err}` };
+      for (const args of [["update-ref",`refs/heads/${branch}`,"FETCH_HEAD"],["symbolic-ref","HEAD",`refs/heads/${branch}`],["read-tree","FETCH_HEAD"]]) {
+        const result=git(args,stage);
+        if (!result.ok) return {...base,error:`git index 失败: ${result.err}`};
+      }
     } else {
+      if (!/couldn't find remote ref|could not find remote branch/i.test(fetched.err)) return {...base,error:`git fetch 失败: ${fetched.err}`};
       // 远端还没有该分支（首次推送）
       const co = git(["checkout", "-B", branch], stage);
       if (!co.ok) return { ...base, error: `git checkout 失败: ${co.err}` };
     }
-    git(["add", "-A"], stage);
+    // Stage only this backup; git add -A would delete old entries whose blobs
+    // deliberately have not been materialized in this temporary worktree.
+    const payloadFiles=[payloadName,...[".sha256",".manifest.json",".sig"].filter((side)=>existsSync(join(stage,payloadName+side))).map((side)=>payloadName+side)];
+    const added=git(["add","--",...payloadFiles],stage);
+    if (!added.ok) return {...base,error:`git add 失败: ${added.err}`};
+    const tree=git(["write-tree","--missing-ok"],stage);
+    if (!tree.ok) return {...base,error:`git write-tree 失败: ${tree.err}`};
+    // Commit the index directly: porcelain commit refreshes the worktree and
+    // may lazily fetch old archives merely to summarize their missing files.
     const commit = git(
       [
         "-c",
         "user.name=openselect-backup",
         "-c",
         "user.email=backup@openselect.local",
-        "commit",
-        "-q",
+        "commit-tree",
+        tree.out,
+        ...(fetched.ok ? ["-p","FETCH_HEAD"] : []),
         "-m",
         `openselect backup ${new Date().toISOString()}`,
       ],
       stage,
     );
-    if (!commit.ok && !/nothing to commit/i.test(commit.err + commit.out)) {
+    if (!commit.ok) {
       return { ...base, error: `git commit 失败: ${commit.err}` };
     }
+    const moved=git(["update-ref",`refs/heads/${branch}`,commit.out],stage);
+    if (!moved.ok) return {...base,error:`git update-ref 失败: ${moved.err}`};
     const rev = git(["rev-parse", "HEAD"], stage);
     const push = git(["push", "origin", `HEAD:refs/heads/${branch}`], stage);
     if (!push.ok) return { ...base, commit: rev.out, error: `git push 失败: ${push.err}` };
-    return { ...base, ok: true, commit: rev.out };
+    return { ...base, ok: true, file:payloadName, commit: rev.out };
   } finally {
     rmSync(stage, { recursive: true, force: true });
   }

@@ -3,6 +3,7 @@ import { HOME, clamp, ensureDir, readJson, slugify, writeJson } from "./util";
 import { isClientKind } from "./client";
 import { isProviderIntegration } from "./providers";
 import { codingAutoOrder } from "./coding_auto";
+import { ROUTING_MODES } from "./coding_auto";
 import type { Account, Config } from "./types";
 
 export const OPENSELECT_DIR = join(HOME, ".openselect");
@@ -63,6 +64,7 @@ export function normalizeConfig(raw: Partial<Config>): Config {
   };
   cfg.policy.switchAt = clamp(Number(cfg.policy.switchAt) || d.policy.switchAt, SWITCH_AT_MIN, SWITCH_AT_MAX);
   if (raw.policy?.codingAutoOrder !== undefined) cfg.policy.codingAutoOrder = codingAutoOrder(raw.policy.codingAutoOrder);
+  cfg.policy.routingMode = ROUTING_MODES.includes(raw.policy?.routingMode as never) ? raw.policy!.routingMode : "manual";
   cfg.policy.freeFirst = Array.isArray(raw.policy?.freeFirst)
     ? [
         ...new Set(
@@ -125,6 +127,7 @@ export function normalizeConfig(raw: Partial<Config>): Config {
     remote:
       typeof raw.backup?.remote === "string" && raw.backup.remote.trim() !== "" ? raw.backup.remote.trim() : null,
     encryptRemote: raw.backup?.encryptRemote === true,
+    keychain: raw.backup?.keychain === true,
   };
   // zen 免费层：端口/兜底模型做类型清洗，避免手改配置写坏后运行期崩溃
   cfg.zen = {
